@@ -66,8 +66,8 @@ interface LogEntry {
           
           <div class="mt-4 flex items-center justify-between flex-wrap gap-2">
             <div><span class="opacity-60 text-sm">Current: </span><span class="text-primary font-medium">{{ getCurrentModelName() }}</span></div>
-            <div class="flex gap-2">
-              <button (click)="checkAgent()" [disabled]="checkingAgent" class="btn btn-info btn-sm">
+            <div class="flex gap-2 h-10">
+              <button (click)="checkAgent()" [disabled]="checkingAgent" class="btn btn-info">
                 @if (checkingAgent) { <span class="loading loading-spinner loading-sm"></span> Checking... } @else { 🧪 Check Agent }
               </button>
               <button (click)="saveAndRestart()" [disabled]="!hasChanges || saving" class="btn btn-primary">
@@ -183,6 +183,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
   agentResponse = '';
   currentMessageId = '';
   pollInterval: any;
+  statusInterval: any;
   
   toastMessage = '';
   toastType: 'success' | 'error' = 'success';
@@ -194,12 +195,14 @@ export class ConfigComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.loadConfig();
     this.checkAgentStatus();
+    
+    // Auto-refresh status every 10 seconds
+    this.statusInterval = setInterval(() => this.checkAgentStatus(), 10000);
   }
 
   ngOnDestroy() {
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-    }
+    if (this.pollInterval) clearInterval(this.pollInterval);
+    if (this.statusInterval) clearInterval(this.statusInterval);
   }
 
   addLog(message: string) {
@@ -217,13 +220,13 @@ export class ConfigComponent implements OnInit, OnDestroy {
   }
 
   checkAgentStatus() {
-    this.addLog('GET /api/agent/status');
     this.http.get<any>('/api/agent/status').subscribe({
       next: (res) => {
         this.agentStatus = res.status || 'unknown';
-        this.addLog(`RESPONSE: agent status = ${this.agentStatus}`);
       },
-      error: (err) => this.addLog(`ERROR: ${err.message}`)
+      error: () => {
+        this.agentStatus = 'unknown';
+      }
     });
   }
 
