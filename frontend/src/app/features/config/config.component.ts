@@ -64,7 +64,7 @@ interface Model {
                 <span class="label-text opacity-60">API Key</span>
               </label>
               <div class="flex gap-2">
-                <input type="password" 
+                <input [type]="showApiKey ? 'text' : 'password'"
                        [(ngModel)]="apiKey"
                        (ngModelChange)="onFieldChange()"
                        placeholder="Enter API key for selected model"
@@ -199,8 +199,8 @@ interface Model {
       <div class="card bg-base-200">
         <div class="card-body">
           <h3 class="card-title">Firebase Webhook URL</h3>
-          <p class="opacity--4">
-           60 text-sm mb-4">Configure this URL in Firebase Crashlytics to receive crash notifications:
+          <p class="opacity-60 text-sm mb-4">
+            Configure this URL in Firebase Crashlytics to receive crash notifications:
           </p>
           <div class="flex items-center gap-2">
             <code class="flex-1 bg-base-300 px-4 py-2 rounded text-primary">
@@ -213,11 +213,27 @@ interface Model {
         </div>
       </div>
 
-      <!-- Success Toast -->
+      <!-- Toast -->
       @if (showToast) {
         <div class="toast toast-end">
-          <div class="alert alert-success">
+          <div [class]="toastType === 'success' ? 'alert alert-success' : 'alert alert-error'">
             <span>{{ toastMessage }}</span>
+          </div>
+        </div>
+      }
+
+      <!-- Logs -->
+      @if (logs.length > 0) {
+        <div class="card bg-base-200">
+          <div class="card-body">
+            <h3 class="card-title">Logs</h3>
+            <div class="bg-base-300 p-4 rounded-lg max-h-60 overflow-auto font-mono text-xs">
+              @for (log of logs; track $index) {
+                <div [class]="log.includes('ERROR') ? 'text-error' : (log.includes('SUCCESS') ? 'text-success' : '')">
+                  {{ log }}
+                </div>
+              }
+            </div>
           </div>
         </div>
       }
@@ -250,7 +266,10 @@ export class ConfigComponent implements OnInit, OnDestroy {
   showApiKey = false;
   
   showToast = false;
+  toastType: 'success' | 'error' = 'success';
   toastMessage = '';
+  
+  logs: string[] = [];
   
   repoStatus = {
     downloaded: false,
@@ -273,6 +292,14 @@ export class ConfigComponent implements OnInit, OnDestroy {
     }
   }
 
+  addLog(message: string) {
+    const timestamp = new Date().toLocaleTimeString();
+    this.logs.unshift(`[${timestamp}] ${message}`);
+    if (this.logs.length > 50) {
+      this.logs.pop();
+    }
+  }
+
   onFieldChange() {
     this.hasChanges = this.apiKey !== this.originalApiKey;
   }
@@ -284,28 +311,37 @@ export class ConfigComponent implements OnInit, OnDestroy {
   checkAgentStatus() {
     this.http.get<any>('http://localhost:3000/api/agent/status')
       .subscribe({
-        next: (res) => this.agentStatus = res.status || 'unknown'
+        next: (res) => {
+          this.agentStatus = res.status || 'unknown';
+          this.addLog(`Agent status: ${this.agentStatus}`);
+        },
+        error: (err) => {
+          this.addLog(`ERROR getting agent status: ${err.message}`);
+        }
       });
   }
 
   restartAgent() {
+    this.addLog('Restarting agent...');
     this.agentRestarting = true;
     this.http.post('http://localhost:3000/api/agent/restart', {})
       .subscribe({
         next: () => {
-          this.showToastMessage('Agent restarting...');
+          this.addLog('SUCCESS: Agent restart command sent');
           setTimeout(() => {
             this.agentRestarting = false;
             this.checkAgentStatus();
           }, 10000);
         },
-        error: () => {
+        error: (err) => {
+          this.addLog(`ERROR restarting agent: ${err.message}`);
           this.agentRestarting = false;
         }
       });
   }
 
   saveAndRestart() {
+    this.addLog(`Saving model: ${this.selectedModel}...`);
     this.saving = true;
     
     this.http.post('http://localhost:3000/api/config/model', {
@@ -313,29 +349,31 @@ export class ConfigComponent implements OnInit, OnDestroy {
       api_key: this.apiKey
     }).subscribe({
       next: () => {
+        this.addLog('SUCCESS: Model config saved');
         this.originalApiKey = this.apiKey;
         this.hasChanges = false;
         
-        // Wait a bit then restart agent
         setTimeout(() => {
           this.restartAgent();
         }, 500);
         
-        this.showToastMessage(`Model updated to ${this.getCurrentModelName()}! Agent restarting...`);
+        this.showToastMessage(`Model updated to ${this.getCurrentModelName()}! Agent restarting...`, 'success');
         
         setTimeout(() => {
           this.saving = false;
           this.checkAgentStatus();
         }, 12000);
       },
-      error: () => {
+      error: (err) => {
+        this.addLog(`ERROR saving model: ${err.message}`);
+        this.showToastMessage('Error saving configuration', 'error');
         this.saving = false;
-        this.showToastMessage('Error saving configuration');
       }
     });
   }
 
   loadExistingConfig() {
+    this.addLog('Loading existing configuration...');
     this.http.get<any>('http://localhost:3000/api/repos')
       .subscribe({
         next: (repos) => {
@@ -349,14 +387,20 @@ export class ConfigComponent implements OnInit, OnDestroy {
             this.apiKey = repo.api_key || '';
             this.originalApiKey = this.apiKey;
             this.hasChanges = false;
+            this.addLog('SUCCESS: Configuration loaded');
             this.checkRepoStatus(keys[0]);
+          } else {
+            this.addLog('No existing configuration found');
           }
         },
-        error: () => console.log('No config yet')
+        error: (err) => {
+          this.addLog(`ERROR loading config: ${err.message}`);
+        }
       });
   }
 
   saveConfig() {
+    this.addLog('Saving GitHub + Firebase config...');
     const repo_id = 'default';
     
     this.http.post('http://localhost:3000/api/config', {
@@ -368,10 +412,14 @@ export class ConfigComponent implements OnInit, OnDestroy {
       model: this.selectedModel
     }).subscribe({
       next: () => {
-        this.showToastMessage('Configuration saved!');
+        this.addLog('SUCCESS: Configuration saved');
+        this.showToastMessage('Configuration saved!', 'success');
         this.checkRepoStatus(repo_id);
       },
-      error: () => this.showToastMessage('Error saving config')
+      error: (err) => {
+        this.addLog(`ERROR saving config: ${err.message}`);
+        this.showToastMessage('Error saving configuration', 'error');
+      }
     });
   }
 
@@ -383,26 +431,34 @@ export class ConfigComponent implements OnInit, OnDestroy {
             downloaded: status.downloaded,
             files: status.files || 0
           };
+          this.addLog(`Repo status: downloaded=${status.downloaded}, files=${status.files}`);
+        },
+        error: (err) => {
+          this.addLog(`ERROR getting repo status: ${err.message}`);
         }
       });
   }
 
   downloadRepo() {
+    this.addLog('Starting repo download...');
     this.downloading = true;
     const repo_id = 'default';
     
     this.http.post(`http://localhost:3000/api/repos/${repo_id}/download`, {})
       .subscribe({
         next: () => {
+          this.addLog('SUCCESS: Download started');
           const interval = setInterval(() => {
             this.checkRepoStatus(repo_id);
             if (this.repoStatus.downloaded) {
               this.downloading = false;
               clearInterval(interval);
+              this.addLog('SUCCESS: Repository downloaded');
             }
           }, 2000);
         },
-        error: () => {
+        error: (err) => {
+          this.addLog(`ERROR downloading repo: ${err.message}`);
           this.downloading = false;
         }
       });
@@ -415,10 +471,12 @@ export class ConfigComponent implements OnInit, OnDestroy {
 
   copyUrl() {
     navigator.clipboard.writeText('http://localhost:3000/api/webhook/firebase');
+    this.addLog('Webhook URL copied to clipboard');
   }
 
-  showToastMessage(msg: string) {
+  showToastMessage(msg: string, type: 'success' | 'error') {
     this.toastMessage = msg;
+    this.toastType = type;
     this.showToast = true;
     setTimeout(() => {
       this.showToast = false;
