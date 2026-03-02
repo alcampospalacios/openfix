@@ -32,17 +32,14 @@ interface Stats {
           <div class="text-gray-400 text-sm">Total Crashes</div>
           <div class="text-3xl font-bold text-white mt-2">{{ stats.total }}</div>
         </div>
-        
         <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
           <div class="text-yellow-400 text-sm">Pending</div>
           <div class="text-3xl font-bold text-yellow-400 mt-2">{{ stats.pending }}</div>
         </div>
-        
         <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
           <div class="text-green-400 text-sm">Fixed</div>
           <div class="text-3xl font-bold text-green-400 mt-2">{{ stats.fixed }}</div>
         </div>
-        
         <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
           <div class="text-red-400 text-sm">Failed</div>
           <div class="text-3xl font-bold text-red-400 mt-2">{{ stats.failed }}</div>
@@ -53,34 +50,46 @@ interface Stats {
         <div class="px-6 py-4 border-b border-gray-700">
           <h3 class="text-lg font-semibold text-white">Recent Activity</h3>
         </div>
-        
         <div class="divide-y divide-gray-700">
           @for (crash of crashes; track crash.id) {
             <div class="px-6 py-4 flex items-center justify-between">
               <div class="flex items-center space-x-4">
-                <div class="w-2 h-2 rounded-full bg-yellow-400" *ngIf="crash.status === 'pending'"></div>
-                <div class="w-2 h-2 rounded-full bg-green-400" *ngIf="crash.status === 'fixed'"></div>
-                <div class="w-2 h-2 rounded-full bg-red-400" *ngIf="crash.status === 'failed'"></div>
+                @if (crash.status === 'pending') {
+                  <div class="w-2 h-2 rounded-full bg-yellow-400"></div>
+                }
+                @if (crash.status === 'fixed') {
+                  <div class="w-2 h-2 rounded-full bg-green-400"></div>
+                }
+                @if (crash.status === 'failed') {
+                  <div class="w-2 h-2 rounded-full bg-red-400"></div>
+                }
                 <div>
                   <div class="text-white">{{ crash.title }}</div>
                   <div class="text-gray-500 text-sm">{{ crash.id }}</div>
                 </div>
               </div>
-              <span class="px-3 py-1 rounded-full text-xs font-medium bg-yellow-400/20 text-yellow-400" *ngIf="crash.status === 'pending'">
-                {{ crash.status }}
-              </span>
-              <span class="px-3 py-1 rounded-full text-xs font-medium bg-green-400/20 text-green-400" *ngIf="crash.status === 'fixed'">
-                {{ crash.status }}
-              </span>
-              <span class="px-3 py-1 rounded-full text-xs font-medium bg-red-400/20 text-red-400" *ngIf="crash.status === 'failed'">
-                {{ crash.status }}
-              </span>
+              @if (crash.status === 'pending') {
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-yellow-400/20 text-yellow-400">
+                  {{ crash.status }}
+                </span>
+              }
+              @if (crash.status === 'fixed') {
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-green-400/20 text-green-400">
+                  {{ crash.status }}
+                </span>
+              }
+              @if (crash.status === 'failed') {
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-red-400/20 text-red-400">
+                  {{ crash.status }}
+                </span>
+              }
             </div>
           }
-          
-          <div class="px-6 py-8 text-center text-gray-500" *ngIf="crashes.length === 0">
-            No crashes yet. Configure your repository to start monitoring.
-          </div>
+          @if (crashes.length === 0) {
+            <div class="px-6 py-8 text-center text-gray-500">
+              No crashes yet. Configure your repository to start monitoring.
+            </div>
+          }
         </div>
       </div>
     </div>

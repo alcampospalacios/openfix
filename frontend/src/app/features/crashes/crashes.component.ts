@@ -21,9 +21,8 @@ interface Crash {
       <div class="flex items-center justify-between">
         <div>
           <h2 class="text-2xl font-bold text-white">Crashes</h2>
-          <p class="text-gray-400">All reported crashes</p>
-        </div>
-        
+          <p class="text-gray-400">All reported crashes</div>
+        </p>
         <button (click)="refresh()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white">
           Refresh
         </button>
@@ -44,37 +43,54 @@ interface Crash {
             @for (crash of crashes; track crash.id) {
               <tr class="hover:bg-gray-750">
                 <td class="px-6 py-4">
-                  <span class="px-2 py-1 rounded-full text-xs font-medium bg-yellow-400/20 text-yellow-400" *ngIf="crash.status === 'pending'">
-                    {{ crash.status }}
-                  </span>
-                  <span class="px-2 py-1 rounded-full text-xs font-medium bg-green-400/20 text-green-400" *ngIf="crash.status === 'fixed'">
-                    {{ crash.status }}
-                  </span>
-                  <span class="px-2 py-1 rounded-full text-xs font-medium bg-red-400/20 text-red-400" *ngIf="crash.status === 'failed'">
-                    {{ crash.status }}
-                  </span>
+                  @if (crash.status === 'pending') {
+                    <span class="px-2 py-1 rounded-full text-xs font-medium bg-yellow-400/20 text-yellow-400">
+                      {{ crash.status }}
+                    </span>
+                  }
+                  @if (crash.status === 'fixed') {
+                    <span class="px-2 py-1 rounded-full text-xs font-medium bg-green-400/20 text-green-400">
+                      {{ crash.status }}
+                    </span>
+                  }
+                  @if (crash.status === 'failed') {
+                    <span class="px-2 py-1 rounded-full text-xs font-medium bg-red-400/20 text-red-400">
+                      {{ crash.status }}
+                    </span>
+                  }
                 </td>
                 <td class="px-6 py-4 text-white">{{ crash.title }}</td>
                 <td class="px-6 py-4">
-                  <span class="text-sm text-red-400" *ngIf="crash.severity === 'ERROR'">{{ crash.severity }}</span>
-                  <span class="text-sm text-yellow-400" *ngIf="crash.severity === 'WARNING'">{{ crash.severity }}</span>
-                  <span class="text-sm text-blue-400" *ngIf="crash.severity === 'INFO'">{{ crash.severity }}</span>
+                  @if (crash.severity === 'ERROR') {
+                    <span class="text-sm text-red-400">{{ crash.severity }}</span>
+                  }
+                  @if (crash.severity === 'WARNING') {
+                    <span class="text-sm text-yellow-400">{{ crash.severity }}</span>
+                  }
+                  @if (crash.severity === 'INFO') {
+                    <span class="text-sm text-blue-400">{{ crash.severity }}</span>
+                  }
                 </td>
                 <td class="px-6 py-4 text-gray-400 text-sm">{{ crash.timestamp | date:'short' }}</td>
                 <td class="px-6 py-4">
-                  <a *ngIf="crash.prUrl" [href]="crash.prUrl" target="_blank" class="text-primary-400 hover:text-primary-300">
-                    View PR →
-                  </a>
-                  <span *ngIf="!crash.prUrl" class="text-gray-500">—</span>
+                  @if (crash.prUrl) {
+                    <a [href]="crash.prUrl" target="_blank" class="text-primary-400 hover:text-primary-300">
+                      View PR
+                    </a>
+                  }
+                  @if (!crash.prUrl) {
+                    <span class="text-gray-500">—</span>
+                  }
                 </td>
               </tr>
             }
           </tbody>
         </table>
-        
-        <div class="p-8 text-center text-gray-500" *ngIf="crashes.length === 0">
-          No crashes recorded yet
-        </div>
+        @if (crashes.length === 0) {
+          <div class="p-8 text-center text-gray-500">
+            No crashes recorded yet
+          </div>
+        }
       </div>
     </div>
   `
