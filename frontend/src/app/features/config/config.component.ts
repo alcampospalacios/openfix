@@ -3,10 +3,10 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 
-interface Repo {
-  github_repo: string;
-  github_token: string;
-  firebase_project: string;
+interface Model {
+  id: string;
+  name: string;
+  provider: string;
 }
 
 @Component({
@@ -17,7 +17,39 @@ interface Repo {
     <div class="space-y-6">
       <div>
         <h2 class="text-2xl font-bold text-white">Configuration</h2>
-        <p class="text-gray-400">Configure your repositories and Firebase projects</p>
+        <p class="text-gray-400">Configure your repositories, AI model, and Firebase projects</p>
+      </div>
+
+      <!-- AI Model Selection -->
+      <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
+        <h3 class="text-lg font-semibold text-white mb-4">🤖 AI Model</h3>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-gray-400 text-sm mb-2">Select Model</label>
+            <select [(ngModel)]="selectedModel"
+                    (ngModelChange)="saveModel()"
+                    class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary-500">
+              <option *ngFor="let model of models" [value]="model.id">
+                {{ model.name }} ({{ model.provider }})
+              </option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-gray-400 text-sm mb-2">API Key (optional)</label>
+            <input type="password" 
+                   [(ngModel)]="apiKey"
+                   (ngModelChange)="saveModel()"
+                   placeholder="Your API key for selected model"
+                   class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary-500">
+          </div>
+        </div>
+        
+        <div class="mt-4 p-3 bg-gray-700 rounded-lg">
+          <span class="text-gray-400 text-sm">Current model: </span>
+          <span class="text-primary-400 font-medium">{{ getCurrentModelName() }}</span>
+        </div>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -124,6 +156,16 @@ interface Repo {
   `
 })
 export class ConfigComponent implements OnInit {
+  models: Model[] = [
+    { id: 'minimax/MiniMax-M2.5', name: 'MiniMax M2.5', provider: 'minimax' },
+    { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'openai' },
+    { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'anthropic' },
+    { id: 'google/gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'google' },
+  ];
+  
+  selectedModel = 'minimax/MiniMax-M2.5';
+  apiKey = '';
+  
   githubRepo = '';
   githubToken = '';
   firebaseProjectId = '';
@@ -140,6 +182,14 @@ export class ConfigComponent implements OnInit {
 
   ngOnInit() {
     this.loadExistingConfig();
+    this.loadModels();
+  }
+
+  loadModels() {
+    this.http.get<any>('http://localhost:3000/api/models')
+      .subscribe({
+        next: (res) => this.models = res.models
+      });
   }
 
   loadExistingConfig() {
@@ -152,6 +202,8 @@ export class ConfigComponent implements OnInit {
             this.githubRepo = repo.github_repo;
             this.githubToken = repo.github_token;
             this.firebaseProjectId = repo.firebase_project;
+            this.selectedModel = repo.model || 'minimax/MiniMax-M2.5';
+            this.apiKey = repo.api_key || '';
             this.checkRepoStatus(keys[0]);
           }
         },
@@ -159,19 +211,30 @@ export class ConfigComponent implements OnInit {
       });
   }
 
+  saveModel() {
+    this.http.post('http://localhost:3000/api/config/model', {
+      model: this.selectedModel,
+      api_key: this.apiKey
+    }).subscribe({
+      next: () => {
+        this.showMessage('Model updated!');
+      }
+    });
+  }
+
   saveConfig() {
-    const repo_id = 'default'; // For now, single repo
+    const repo_id = 'default';
     
     this.http.post('http://localhost:3000/api/config', {
       repo_id,
       github_repo: this.githubRepo,
       github_token: this.githubToken,
       firebase_project: this.firebaseProjectId,
-      firebase_credentials: this.firebaseCredentials
+      firebase_credentials: this.firebaseCredentials,
+      model: this.selectedModel
     }).subscribe({
       next: () => {
-        this.message = 'Configuration saved!';
-        setTimeout(() => this.message = '', 3000);
+        this.showMessage('Configuration saved!');
         this.checkRepoStatus(repo_id);
       },
       error: () => console.log('Error saving config')
@@ -197,7 +260,6 @@ export class ConfigComponent implements OnInit {
     this.http.post(`http://localhost:3000/api/repos/${repo_id}/download`, {})
       .subscribe({
         next: () => {
-          // Poll for status
           const interval = setInterval(() => {
             this.checkRepoStatus(repo_id);
             if (this.repoStatus.downloaded) {
@@ -212,7 +274,17 @@ export class ConfigComponent implements OnInit {
       });
   }
 
+  getCurrentModelName() {
+    const model = this.models.find(m => m.id === this.selectedModel);
+    return model ? model.name : this.selectedModel;
+  }
+
   copyUrl() {
     navigator.clipboard.writeText('http://localhost:3000/api/webhook/firebase');
+  }
+
+  showMessage(msg: string) {
+    this.message = msg;
+    setTimeout(() => this.message = '', 3000);
   }
 }

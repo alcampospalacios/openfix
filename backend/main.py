@@ -24,6 +24,14 @@ REPOS_DIR.mkdir(exist_ok=True)
 CRASHES_FILE = DATA_DIR / "crashes.json"
 CONFIG_FILE = DATA_DIR / "config.json"
 
+# Available models
+AVAILABLE_MODELS = [
+    {"id": "minimax/MiniMax-M2.5", "name": "MiniMax M2.5", "provider": "minimax"},
+    {"id": "openai/gpt-4o", "name": "GPT-4o", "provider": "openai"},
+    {"id": "anthropic/claude-3.5-sonnet", "name": "Claude 3.5 Sonnet", "provider": "anthropic"},
+    {"id": "google/gemini-2.0-flash", "name": "Gemini 2.0 Flash", "provider": "google"},
+]
+
 # Load/Save helpers
 def load_crashes():
     if CRASHES_FILE.exists():
@@ -56,6 +64,11 @@ class RepoConfig(BaseModel):
     github_token: str
     firebase_project: str
     firebase_credentials: str
+    model: Optional[str] = "minimax/MiniMax-M2.5"
+
+class ModelConfig(BaseModel):
+    model: str
+    api_key: Optional[str] = None
 
 class CrashUpdate(BaseModel):
     status: Optional[str] = None
@@ -70,6 +83,12 @@ def root():
 def health():
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
+# Get available models
+@app.get("/api/models")
+def get_models():
+    """Get list of available AI models"""
+    return {"models": AVAILABLE_MODELS}
+
 # Configure repository
 @app.post("/api/config")
 def configure_repo(config: RepoConfig):
@@ -79,10 +98,32 @@ def configure_repo(config: RepoConfig):
         "github_repo": config.github_repo,
         "github_token": config.github_token,
         "firebase_project": config.firebase_project,
-        "firebase_credentials": config.firebase_credentials
+        "firebase_credentials": config.firebase_credentials,
+        "model": config.model or "minimax/MiniMax-M2.5"
     }
     save_config(current)
     return {"status": "configured", "repo_id": config.repo_id}
+
+# Update model configuration
+@app.post("/api/config/model")
+def configure_model(model_config: ModelConfig):
+    """Configure the AI model to use"""
+    current = load_config()
+    
+    # Update default repo with model
+    keys = list(current.keys())
+    if keys:
+        current[keys[0]]["model"] = model_config.model
+        if model_config.api_key:
+            current[keys[0]]["api_key"] = model_config.api_key
+    else:
+        current["default"] = {
+            "model": model_config.model,
+            "api_key": model_config.api_key
+        }
+    
+    save_config(current)
+    return {"status": "configured", "model": model_config.model}
 
 # Get repositories
 @app.get("/api/repos")
@@ -98,7 +139,7 @@ def get_repo(repo_id: str):
         raise HTTPException(status_code=404, detail="Repository not found")
     return config[repo_id]
 
-# NEW: Download repository
+# Download repository
 @app.post("/api/repos/{repo_id}/download")
 def download_repo(repo_id: str, background_tasks: BackgroundTasks):
     """Download repository for agent to work with"""
@@ -111,12 +152,9 @@ def download_repo(repo_id: str, background_tasks: BackgroundTasks):
     github_repo = repo_config['github_repo']
     github_token = repo_config['github_token']
     
-    # Extract owner/repo from URL
-    # Accept: https://github.com/owner/repo or owner/repo
     if '/' in github_repo and not github_repo.startswith('http'):
         repo_name = github_repo
     elif 'github.com' in github_repo:
-        # Extract from URL
         parts = github_repo.replace('https://github.com/', '').replace('.git', '').split('/')
         repo_name = '/'.join(parts[-2:])
     else:
@@ -124,19 +162,15 @@ def download_repo(repo_id: str, background_tasks: BackgroundTasks):
     
     target_dir = REPOS_DIR / repo_id
     
-    # Start download in background
     background_tasks.add_task(clone_repository, github_token, repo_name, target_dir)
     
     return {"status": "downloading", "repo_id": repo_id, "path": str(target_dir)}
 
 def clone_repository(token: str, repo_name: str, target_dir: Path):
-    """Clone repository in background"""
     try:
-        # Remove existing if present
         if target_dir.exists():
             shutil.rmtree(target_dir)
         
-        # Clone with token
         repo_url = f"https://{token}@github.com/{repo_name}.git"
         result = subprocess.run(
             ["git", "clone", "--depth", "1", repo_url, str(target_dir)],
@@ -153,10 +187,8 @@ def clone_repository(token: str, repo_name: str, target_dir: Path):
     except Exception as e:
         print(f"Error cloning repo: {e}")
 
-# Check repo status
 @app.get("/api/repos/{repo_id}/status")
 def get_repo_status(repo_id: str):
-    """Check if repository is downloaded"""
     config = load_config()
     
     if repo_id not in config:
@@ -164,7 +196,6 @@ def get_repo_status(repo_id: str):
     
     github_repo = config[repo_id]['github_repo']
     
-    # Determine path
     if '/' in github_repo and not github_repo.startswith('http'):
         repo_name = github_repo
     elif 'github.com' in github_repo:
@@ -173,7 +204,7 @@ def get_repo_status(repo_id: str):
     else:
         repo_name = github_repo
     
-    target_dir = REPOS_DIR / repo_id
+    target_dir = REPOS_DIR / repo_name
     
     return {
         "repo_id": repo_id,
@@ -182,10 +213,8 @@ def get_repo_status(repo_id: str):
         "files": len(list(target_dir.rglob('*'))) if target_dir.exists() else 0
     }
 
-# Firebase webhook - receive crash notification
 @app.post("/api/webhook/firebase")
 async def firebase_webhook(payload: CrashPayload, background_tasks: BackgroundTasks):
-    """Receive crash notification from Firebase"""
     crash_data = payload.data
     
     crash = {
@@ -203,25 +232,20 @@ async def firebase_webhook(payload: CrashPayload, background_tasks: BackgroundTa
     crashes.append(crash)
     save_crashes(crashes)
     
-    # Trigger OpenClaw agent
     background_tasks.add_task(trigger_agent, crash)
     
     return {"status": "received", "crash_id": crash["id"]}
 
 async def trigger_agent(crash: dict):
-    """Notify OpenClaw agent to process the crash"""
     print(f"📩 New crash detected: {crash['id']}")
 
-# Get all crashes
 @app.get("/api/crashes")
 def get_crashes(status: Optional[str] = None):
-    """Get all crashes, optionally filtered by status"""
     crashes = load_crashes()
     if status:
         crashes = [c for c in crashes if c.get("status") == status]
     return crashes
 
-# Get specific crash
 @app.get("/api/crashes/{crash_id}")
 def get_crash(crash_id: str):
     crashes = load_crashes()
@@ -230,10 +254,8 @@ def get_crash(crash_id: str):
             return crash
     raise HTTPException(status_code=404, detail="Crash not found")
 
-# Update crash status
 @app.patch("/api/crashes/{crash_id}")
 def update_crash(crash_id: str, update: CrashUpdate = Body(...)):
-    """Update crash status (called by agent)"""
     crashes = load_crashes()
     
     for crash in crashes:
@@ -250,10 +272,8 @@ def update_crash(crash_id: str, update: CrashUpdate = Body(...)):
     
     raise HTTPException(status_code=404, detail="Crash not found")
 
-# Get config for agent
 @app.get("/api/agent/config")
 def get_agent_config():
-    """Get configuration for the agent to use"""
     return load_config()
 
 if __name__ == "__main__":
