@@ -2,7 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
+RUN mkdir -p /app/data && chmod 777 /app/data
+
 RUN pip install --no-cache-dir fastapi uvicorn httpx pydantic
 
 COPY main.py .

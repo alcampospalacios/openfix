@@ -9,7 +9,8 @@ services:
     ports:
       - "4200:4200"
     depends_on:
-      - backend
+      backend:
+        condition: service_started
 
   # Backend API (FastAPI)
   backend:
@@ -19,30 +20,20 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./config:/app/config
+      - ./data:/app/data
 
-  # OpenClaw Agent (in Docker)
-  openclaw:
-    image: node:20-alpine
-    working_dir: /app
-    volumes:
-      - openclaw_data:/root/.openclaw
-      - ../openclaw-agent:/app/agent
-    command: sh -c "npm install -g openclaw && openclaw gateway start"
-    ports:
-      - "18789:18789"
+  # OpenClaw Agent
+  agent:
+    build:
+      context: ../openclaw-agent
+      dockerfile: Dockerfile
     environment:
-      - NODE_ENV=development
-
-  # Optional: Database (for production)
-  # postgres:
-  #   image: postgres:15-alpine
-  #   environment:
-  #     - POSTGRES_USER=openfix
-  #     - POSTGRES_PASSWORD=openfix
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
+      - BACKEND_URL=http://backend:3000
+    depends_on:
+      backend:
+        condition: service_started
+    volumes:
+      - agent-cache:/tmp/openfix-repo
 
 volumes:
-  openclaw_data:
-  # postgres_data:
+  agent-cache:
