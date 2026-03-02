@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # Frontend Angular
+  # Frontend Angular with Nginx proxy
   frontend:
     build:
       context: ./frontend
@@ -10,6 +10,8 @@ services:
       - "4200:80"
     depends_on:
       - backend
+    networks:
+      - openfix-network
 
   # Backend API (FastAPI)
   backend:
@@ -21,6 +23,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./repos:/app/repos
+    networks:
+      - openfix-network
 
   # OpenClaw Agent
   agent:
@@ -33,3 +37,9 @@ services:
       - backend
     volumes:
       - ./repos:/app/repos
+    networks:
+      - openfix-network
+
+networks:
+  openfix-network:
+    driver: bridge

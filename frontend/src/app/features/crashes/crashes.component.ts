@@ -101,7 +101,7 @@ export class CrashesComponent implements OnInit {
   }
 
   loadCrashes() {
-    this.http.get<Crash[]>('http://localhost:3000/api/crashes')
+    this.http.get<Crash[]>('/api/crashes')
       .subscribe({
         next: (crashes: Crash[]) => this.crashes = crashes.reverse(),
         error: () => console.log('Backend not available')

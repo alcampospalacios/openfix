@@ -204,7 +204,7 @@ interface Model {
           </p>
           <div class="flex items-center gap-2">
             <code class="flex-1 bg-base-300 px-4 py-2 rounded text-primary">
-              http://localhost:3000/api/webhook/firebase
+              '/api'/api/webhook/firebase
             </code>
             <button (click)="copyUrl()" class="btn btn-ghost btn-sm">
               Copy
@@ -309,7 +309,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
   }
 
   checkAgentStatus() {
-    this.http.get<any>('http://localhost:3000/api/agent/status')
+    this.http.get<any>('/api/agent/status')
       .subscribe({
         next: (res) => {
           this.agentStatus = res.status || 'unknown';
@@ -324,7 +324,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
   restartAgent() {
     this.addLog('Restarting agent...');
     this.agentRestarting = true;
-    this.http.post('http://localhost:3000/api/agent/restart', {})
+    this.http.post('/api/agent/restart', {})
       .subscribe({
         next: () => {
           this.addLog('SUCCESS: Agent restart command sent');
@@ -344,7 +344,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
     this.addLog(`Saving model: ${this.selectedModel}...`);
     this.saving = true;
     
-    this.http.post('http://localhost:3000/api/config/model', {
+    this.http.post('/api/config/model', {
       model: this.selectedModel,
       api_key: this.apiKey
     }).subscribe({
@@ -374,7 +374,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
 
   loadExistingConfig() {
     this.addLog('Loading existing configuration...');
-    this.http.get<any>('http://localhost:3000/api/repos')
+    this.http.get<any>('/api/repos')
       .subscribe({
         next: (repos) => {
           const keys = Object.keys(repos);
@@ -403,7 +403,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
     this.addLog('Saving GitHub + Firebase config...');
     const repo_id = 'default';
     
-    this.http.post('http://localhost:3000/api/config', {
+    this.http.post('/api/config', {
       repo_id,
       github_repo: this.githubRepo,
       github_token: this.githubToken,
@@ -424,7 +424,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
   }
 
   checkRepoStatus(repoId: string) {
-    this.http.get<any>(`http://localhost:3000/api/repos/${repoId}/status`)
+    this.http.get<any>(`'/api'/api/repos/${repoId}/status`)
       .subscribe({
         next: (status) => {
           this.repoStatus = {
@@ -444,7 +444,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
     this.downloading = true;
     const repo_id = 'default';
     
-    this.http.post(`http://localhost:3000/api/repos/${repo_id}/download`, {})
+    this.http.post(`'/api'/api/repos/${repo_id}/download`, {})
       .subscribe({
         next: () => {
           this.addLog('SUCCESS: Download started');
@@ -470,7 +470,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
   }
 
   copyUrl() {
-    navigator.clipboard.writeText('http://localhost:3000/api/webhook/firebase');
+    navigator.clipboard.writeText('/api/webhook/firebase');
     this.addLog('Webhook URL copied to clipboard');
   }
 

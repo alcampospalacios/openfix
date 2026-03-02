@@ -113,7 +113,7 @@ export class DashboardComponent implements OnInit {
   }
 
   loadData() {
-    this.http.get<Crash[]>('http://localhost:3000/api/crashes')
+    this.http.get<Crash[]>('/api/crashes')
       .subscribe({
         next: (crashes: Crash[]) => {
           this.crashes = crashes.slice(-10).reverse();
