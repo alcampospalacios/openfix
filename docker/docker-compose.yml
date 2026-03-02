@@ -13,7 +13,7 @@ services:
     depends_on:
       - backend
 
-  # Backend API
+  # Backend API (FastAPI)
   backend:
     build:
       context: ../backend
@@ -22,45 +22,20 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=development
-      - DATABASE_URL=postgresql://openfix:openfix@postgres:5432/openfix
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      - postgres
-      - redis
     volumes:
       - ../backend:/app
-      - /app/node_modules
 
-  # OpenClaw Agent
-  agent:
-    build:
-      context: ../openclaw-agent
-      dockerfile: Dockerfile
-    environment:
-      - NODE_ENV=development
-    volumes:
-      - ../openclaw-agent:/app
+  # Database (optional - for production)
+  # postgres:
+  #   image: postgres:15-alpine
+  #   environment:
+  #     - POSTGRES_USER=openfix
+  #     - POSTGRES_PASSWORD=openfix
+  #   ports:
+  #     - "5432:5432"
 
-  # Database
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_USER=openfix
-      - POSTGRES_PASSWORD=openfix
-      - POSTGRES_DB=openfix
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  # Cache
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-
-volumes:
-  postgres_data:
-  redis_data:
+  # Redis (optional - for production)
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "6379:6379"

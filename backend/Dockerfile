@@ -1,12 +1,12 @@
-FROM node:20-alpine
+FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+# Install dependencies
+RUN pip install --no-cache-dir fastapi uvicorn httpx pydantic
 
-COPY . .
+COPY main.py .
 
 EXPOSE 3000
 
-CMD ["npm", "run", "start:dev"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3000"]
