@@ -10,7 +10,6 @@ import json
 import os
 import shutil
 import subprocess
-import signal
 from datetime import datetime
 from pathlib import Path
 
@@ -103,7 +102,6 @@ def configure_repo(config: RepoConfig):
 
 @app.post("/api/config/model")
 def configure_model(model_config: ModelConfig, background_tasks: BackgroundTasks):
-    """Configure AI model and restart agent"""
     current = load_config()
     
     keys = list(current.keys())
@@ -118,8 +116,6 @@ def configure_model(model_config: ModelConfig, background_tasks: BackgroundTasks
         }
     
     save_config(current)
-    
-    # Restart agent to load new config
     background_tasks.add_task(restart_agent)
     
     return {"status": "configured", "model": model_config.model, "agent_restarting": True}
@@ -127,21 +123,17 @@ def configure_model(model_config: ModelConfig, background_tasks: BackgroundTasks
 def restart_agent():
     """Restart the OpenClaw agent"""
     try:
-        # Try to find and restart the agent container
         result = subprocess.run(
             ["docker-compose", "restart", "agent"],
-            cwd="/app",
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=60,
+            cwd="/app"
         )
         
         if result.returncode == 0:
             print("✅ Agent restarted successfully")
         else:
-            print(f"⚠️  Agent restart: {result.stderr}")
-            
-            # Fallback: try docker restart
             subprocess.run(
                 ["docker", "restart", "openfix-agent-1"],
                 capture_output=True,
@@ -153,13 +145,11 @@ def restart_agent():
 
 @app.post("/api/agent/restart")
 def restart_agent_manual(background_tasks: BackgroundTasks):
-    """Manually restart the agent"""
     background_tasks.add_task(restart_agent)
     return {"status": "restarting", "message": "Agent is restarting..."}
 
 @app.get("/api/agent/status")
 def get_agent_status():
-    """Get agent status"""
     try:
         result = subprocess.run(
             ["docker", "ps", "--filter", "name=agent", "--format", "{{.Status}}"],
@@ -170,10 +160,7 @@ def get_agent_status():
         
         if result.returncode == 0:
             status = result.stdout.strip()
-            return {
-                "status": "running" if status else "stopped",
-                "docker_status": status
-            }
+            return {"status": "running" if status else "stopped", "docker_status": status}
     except:
         pass
     
@@ -210,7 +197,6 @@ def download_repo(repo_id: str, background_tasks: BackgroundTasks):
         repo_name = github_repo
     
     target_dir = REPOS_DIR / repo_id
-    
     background_tasks.add_task(clone_repository, github_token, repo_name, target_dir)
     
     return {"status": "downloading", "repo_id": repo_id, "path": str(target_dir)}

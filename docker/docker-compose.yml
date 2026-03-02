@@ -7,10 +7,9 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
     ports:
-      - "4200:4200"
+      - "4200:80"
     depends_on:
-      backend:
-        condition: service_started
+      - backend
 
   # Backend API (FastAPI)
   backend:
@@ -31,7 +30,6 @@ services:
     environment:
       - BACKEND_URL=http://backend:3000
     depends_on:
-      backend:
-        condition: service_started
+      - backend
     volumes:
       - ./repos:/app/repos
