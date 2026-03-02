@@ -8,8 +8,6 @@ services:
       dockerfile: Dockerfile
     ports:
       - "4200:4200"
-    environment:
-      - API_URL=http://backend:3000
     depends_on:
       - backend
 
@@ -20,22 +18,31 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
+    volumes:
+      - ./config:/app/config
+
+  # OpenClaw Agent (in Docker)
+  openclaw:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - openclaw_data:/root/.openclaw
+      - ../openclaw-agent:/app/agent
+    command: sh -c "npm install -g openclaw && openclaw gateway start"
+    ports:
+      - "18789:18789"
     environment:
       - NODE_ENV=development
-    volumes:
-      - ../backend:/app
 
-  # Database (optional - for production)
+  # Optional: Database (for production)
   # postgres:
   #   image: postgres:15-alpine
   #   environment:
   #     - POSTGRES_USER=openfix
   #     - POSTGRES_PASSWORD=openfix
-  #   ports:
-  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
 
-  # Redis (optional - for production)
-  # redis:
-  #   image: redis:7-alpine
-  #   ports:
-  #     - "6379:6379"
+volumes:
+  openclaw_data:
+  # postgres_data:

@@ -2,11 +2,14 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache git openssh-client
+# Install dependencies
+RUN apk add --no-cache git openssh-client curl
 
-COPY package*.json ./
-RUN npm install
+# Copy agent code
+COPY agent.js ./
 
-COPY . .
+# Install runtime dependencies
+RUN npm init -y && npm install node-fetch
 
-CMD ["npm", "run", "start"]
+# Agent runs continuously
+CMD ["node", "agent.js"]
