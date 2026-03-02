@@ -9,6 +9,11 @@ interface Model {
   provider: string;
 }
 
+interface LogEntry {
+  time: string;
+  message: string;
+}
+
 @Component({
   selector: 'app-config',
   standalone: true,
@@ -115,6 +120,24 @@ interface Model {
         </div>
       </div>
 
+      <!-- Logs Panel -->
+      <div class="card bg-base-200">
+        <div class="card-body">
+          <div class="flex items-center justify-between">
+            <h3 class="card-title">📋 API Logs</h3>
+            <button (click)="clearLogs()" class="btn btn-ghost btn-xs">Clear</button>
+          </div>
+          <div class="bg-base-300 rounded p-2 h-48 overflow-y-auto font-mono text-xs space-y-1">
+            @for (log of logs; track log.time) {
+              <div><span class="opacity-50">{{ log.time }}</span> {{ log.message }}</div>
+            }
+            @if (logs.length === 0) {
+              <div class="opacity-50">No logs yet...</div>
+            }
+          </div>
+        </div>
+      </div>
+
       @if (toastMessage) {
         <div class="toast toast-end">
           <div [class]="toastType === 'success' ? 'alert alert-success' : 'alert alert-error'">
@@ -149,6 +172,8 @@ export class ConfigComponent implements OnInit {
   
   toastMessage = '';
   toastType: 'success' | 'error' = 'success';
+  
+  logs: LogEntry[] = [];
 
   constructor(private http: HttpClient) {}
 
@@ -157,14 +182,28 @@ export class ConfigComponent implements OnInit {
     this.checkAgentStatus();
   }
 
+  addLog(message: string) {
+    const time = new Date().toLocaleTimeString();
+    this.logs.unshift({ time, message });
+    if (this.logs.length > 50) this.logs.pop();
+  }
+
+  clearLogs() {
+    this.logs = [];
+  }
+
   onFieldChange() {
     this.hasChanges = this.apiKey !== this.originalApiKey;
   }
 
   checkAgentStatus() {
+    this.addLog('GET /api/agent/status');
     this.http.get<any>('/api/agent/status').subscribe({
-      next: (res) => this.agentStatus = res.status || 'unknown',
-      error: () => this.agentStatus = 'unknown'
+      next: (res) => {
+        this.agentStatus = res.status || 'unknown';
+        this.addLog(`RESPONSE: agent status = ${this.agentStatus}`);
+      },
+      error: (err) => this.addLog(`ERROR: ${err.message}`)
     });
   }
 
@@ -174,14 +213,17 @@ export class ConfigComponent implements OnInit {
 
   saveAndRestart() {
     this.saving = true;
+    this.addLog(`POST /api/config/model { model: ${this.selectedModel} }`);
     this.http.post('/api/config/model', { model: this.selectedModel, api_key: this.apiKey }).subscribe({
       next: () => {
         this.originalApiKey = this.apiKey;
         this.hasChanges = false;
+        this.addLog('RESPONSE: model saved successfully');
         this.showToast('Model saved! Agent restarting...', 'success');
         setTimeout(() => this.saving = false, 10000);
       },
-      error: () => {
+      error: (err) => {
+        this.addLog(`ERROR: ${err.message}`);
         this.showToast('Error saving', 'error');
         this.saving = false;
       }
@@ -189,6 +231,7 @@ export class ConfigComponent implements OnInit {
   }
 
   loadConfig() {
+    this.addLog('GET /api/repos');
     this.http.get<any>('/api/repos').subscribe({
       next: (repos) => {
         const keys = Object.keys(repos);
@@ -200,12 +243,17 @@ export class ConfigComponent implements OnInit {
           this.selectedModel = repo.model || 'minimax/MiniMax-M2.5';
           this.apiKey = repo.api_key || '';
           this.originalApiKey = this.apiKey;
+          this.addLog('RESPONSE: config loaded');
+        } else {
+          this.addLog('RESPONSE: no existing config');
         }
-      }
+      },
+      error: (err) => this.addLog(`ERROR: ${err.message}`)
     });
   }
 
   saveGitHubConfig() {
+    this.addLog(`POST /api/config { repo: ${this.githubRepo} }`);
     this.http.post('/api/config', {
       repo_id: 'default',
       github_repo: this.githubRepo,
@@ -214,8 +262,14 @@ export class ConfigComponent implements OnInit {
       firebase_credentials: this.firebaseCredentials,
       model: this.selectedModel
     }).subscribe({
-      next: () => this.showToast('Configuration saved!', 'success'),
-      error: () => this.showToast('Error saving', 'error')
+      next: () => {
+        this.addLog('RESPONSE: config saved');
+        this.showToast('Configuration saved!', 'success');
+      },
+      error: (err) => {
+        this.addLog(`ERROR: ${err.message}`);
+        this.showToast('Error saving', 'error');
+      }
     });
   }
 
@@ -226,6 +280,7 @@ export class ConfigComponent implements OnInit {
 
   copyUrl() {
     navigator.clipboard.writeText('/api/webhook/firebase');
+    this.addLog('Copied webhook URL to clipboard');
     this.showToast('Copied!', 'success');
   }
 
