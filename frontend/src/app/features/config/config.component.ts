@@ -114,6 +114,10 @@ interface LogEntry {
               <textarea [(ngModel)]="firebaseCredentials" placeholder='{"type": "service_account"}' rows="3" class="textarea textarea-bordered font-mono text-sm"></textarea>
             </div>
           </div>
+          
+          <div class="mt-4">
+            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
+          </div>
         </div>
       </div>
 
@@ -346,6 +350,27 @@ export class ConfigComponent implements OnInit, OnDestroy {
     navigator.clipboard.writeText('/api/webhook/firebase');
     this.addLog('Copied webhook URL to clipboard');
     this.showToast('Copied!', 'success');
+  }
+
+  saveFirebaseConfig() {
+    this.addLog(`POST /api/config { firebase: ${this.firebaseProjectId} }`);
+    this.http.post('/api/config', {
+      repo_id: 'default',
+      github_repo: this.githubRepo,
+      github_token: this.githubToken,
+      firebase_project: this.firebaseProjectId,
+      firebase_credentials: this.firebaseCredentials,
+      model: this.selectedModel
+    }).subscribe({
+      next: () => {
+        this.addLog('RESPONSE: firebase config saved');
+        this.showToast('Firebase config saved!', 'success');
+      },
+      error: (err) => {
+        this.addLog(`ERROR: ${err.message}`);
+        this.showToast('Error saving', 'error');
+      }
+    });
   }
 
   showToast(msg: string, type: 'success' | 'error') {
