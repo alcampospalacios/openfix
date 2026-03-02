@@ -24,8 +24,7 @@ interface Crash {
           <p class="text-gray-400">All reported crashes</p>
         </div>
         
-        <button (click)="refresh()"
-                class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white transition-colors">
+        <button (click)="refresh()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white">
           Refresh
         </button>
       </div>
@@ -42,41 +41,38 @@ interface Crash {
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-700">
-            <tr *ngFor="let crash of crashes" class="hover:bg-gray-750">
-              <td class="px-6 py-4">
-                <span class="px-2 py-1 rounded-full text-xs font-medium"
-                      [ngClass]="{
-                        'bg-yellow-400/20 text-yellow-400': crash.status === 'pending',
-                        'bg-green-400/20 text-green-400': crash.status === 'fixed',
-                        'bg-red-400/20 text-red-400': crash.status === 'failed'
-                      }">
-                  {{ crash.status }}
-                </span>
-              </td>
-              <td class="px-6 py-4 text-white">{{ crash.title }}</td>
-              <td class="px-6 py-4">
-                <span class="text-sm"
-                      [ngClass]="{
-                        'text-red-400': crash.severity === 'ERROR',
-                        'text-yellow-400': crash.severity === 'WARNING',
-                        'text-blue-400': crash.severity === 'INFO'
-                      }">
-                  {{ crash.severity }}
-                </span>
-              </td>
-              <td class="px-6 py-4 text-gray-400 text-sm">{{ crash.timestamp | date:'short' }}</td>
-              <td class="px-6 py-4">
-                <a *ngIf="crash.prUrl" [href]="crash.prUrl" target="_blank"
-                   class="text-primary-400 hover:text-primary-300">
-                  View PR →
-                </a>
-                <span *ngIf="!crash.prUrl" class="text-gray-500">—</span>
-              </td>
-            </tr>
+            @for (crash of crashes; track crash.id) {
+              <tr class="hover:bg-gray-750">
+                <td class="px-6 py-4">
+                  <span class="px-2 py-1 rounded-full text-xs font-medium bg-yellow-400/20 text-yellow-400" *ngIf="crash.status === 'pending'">
+                    {{ crash.status }}
+                  </span>
+                  <span class="px-2 py-1 rounded-full text-xs font-medium bg-green-400/20 text-green-400" *ngIf="crash.status === 'fixed'">
+                    {{ crash.status }}
+                  </span>
+                  <span class="px-2 py-1 rounded-full text-xs font-medium bg-red-400/20 text-red-400" *ngIf="crash.status === 'failed'">
+                    {{ crash.status }}
+                  </span>
+                </td>
+                <td class="px-6 py-4 text-white">{{ crash.title }}</td>
+                <td class="px-6 py-4">
+                  <span class="text-sm text-red-400" *ngIf="crash.severity === 'ERROR'">{{ crash.severity }}</span>
+                  <span class="text-sm text-yellow-400" *ngIf="crash.severity === 'WARNING'">{{ crash.severity }}</span>
+                  <span class="text-sm text-blue-400" *ngIf="crash.severity === 'INFO'">{{ crash.severity }}</span>
+                </td>
+                <td class="px-6 py-4 text-gray-400 text-sm">{{ crash.timestamp | date:'short' }}</td>
+                <td class="px-6 py-4">
+                  <a *ngIf="crash.prUrl" [href]="crash.prUrl" target="_blank" class="text-primary-400 hover:text-primary-300">
+                    View PR →
+                  </a>
+                  <span *ngIf="!crash.prUrl" class="text-gray-500">—</span>
+                </td>
+              </tr>
+            }
           </tbody>
         </table>
         
-        <div *ngIf="crashes.length === 0" class="p-8 text-center text-gray-500">
+        <div class="p-8 text-center text-gray-500" *ngIf="crashes.length === 0">
           No crashes recorded yet
         </div>
       </div>
@@ -95,7 +91,7 @@ export class CrashesComponent implements OnInit {
   loadCrashes() {
     this.http.get<Crash[]>('http://localhost:3000/api/crashes')
       .subscribe({
-        next: (crashes) => this.crashes = crashes.reverse(),
+        next: (crashes: Crash[]) => this.crashes = crashes.reverse(),
         error: () => console.log('Backend not available')
       });
   }
