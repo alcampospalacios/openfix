@@ -5,11 +5,12 @@ FastAPI - Lightweight API for receiving Firebase notifications
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Body
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional
 import json
 import os
 import shutil
 import subprocess
+import signal
 from datetime import datetime
 from pathlib import Path
 
@@ -83,16 +84,12 @@ def root():
 def health():
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
-# Get available models
 @app.get("/api/models")
 def get_models():
-    """Get list of available AI models"""
     return {"models": AVAILABLE_MODELS}
 
-# Configure repository
 @app.post("/api/config")
 def configure_repo(config: RepoConfig):
-    """Save repository configuration"""
     current = load_config()
     current[config.repo_id] = {
         "github_repo": config.github_repo,
@@ -104,13 +101,11 @@ def configure_repo(config: RepoConfig):
     save_config(current)
     return {"status": "configured", "repo_id": config.repo_id}
 
-# Update model configuration
 @app.post("/api/config/model")
-def configure_model(model_config: ModelConfig):
-    """Configure the AI model to use"""
+def configure_model(model_config: ModelConfig, background_tasks: BackgroundTasks):
+    """Configure AI model and restart agent"""
     current = load_config()
     
-    # Update default repo with model
     keys = list(current.keys())
     if keys:
         current[keys[0]]["model"] = model_config.model
@@ -123,15 +118,71 @@ def configure_model(model_config: ModelConfig):
         }
     
     save_config(current)
-    return {"status": "configured", "model": model_config.model}
+    
+    # Restart agent to load new config
+    background_tasks.add_task(restart_agent)
+    
+    return {"status": "configured", "model": model_config.model, "agent_restarting": True}
 
-# Get repositories
+def restart_agent():
+    """Restart the OpenClaw agent"""
+    try:
+        # Try to find and restart the agent container
+        result = subprocess.run(
+            ["docker-compose", "restart", "agent"],
+            cwd="/app",
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if result.returncode == 0:
+            print("✅ Agent restarted successfully")
+        else:
+            print(f"⚠️  Agent restart: {result.stderr}")
+            
+            # Fallback: try docker restart
+            subprocess.run(
+                ["docker", "restart", "openfix-agent-1"],
+                capture_output=True,
+                timeout=30
+            )
+            
+    except Exception as e:
+        print(f"Error restarting agent: {e}")
+
+@app.post("/api/agent/restart")
+def restart_agent_manual(background_tasks: BackgroundTasks):
+    """Manually restart the agent"""
+    background_tasks.add_task(restart_agent)
+    return {"status": "restarting", "message": "Agent is restarting..."}
+
+@app.get("/api/agent/status")
+def get_agent_status():
+    """Get agent status"""
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--filter", "name=agent", "--format", "{{.Status}}"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode == 0:
+            status = result.stdout.strip()
+            return {
+                "status": "running" if status else "stopped",
+                "docker_status": status
+            }
+    except:
+        pass
+    
+    return {"status": "unknown"}
+
 @app.get("/api/repos")
 def get_repos():
-    """Get all configured repositories"""
     return load_config()
 
-# Get single repo
 @app.get("/api/repos/{repo_id}")
 def get_repo(repo_id: str):
     config = load_config()
@@ -139,10 +190,8 @@ def get_repo(repo_id: str):
         raise HTTPException(status_code=404, detail="Repository not found")
     return config[repo_id]
 
-# Download repository
 @app.post("/api/repos/{repo_id}/download")
 def download_repo(repo_id: str, background_tasks: BackgroundTasks):
-    """Download repository for agent to work with"""
     config = load_config()
     
     if repo_id not in config:

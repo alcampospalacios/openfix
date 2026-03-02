@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -20,6 +20,23 @@ interface Model {
         <p class="text-gray-400">Configure your repositories, AI model, and Firebase projects</p>
       </div>
 
+      <!-- Agent Status -->
+      <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-3">
+            <div class="w-3 h-3 rounded-full" 
+                 [ngClass]="agentStatus === 'running' ? 'bg-green-400' : 'bg-red-400'"></div>
+            <span class="text-white font-medium">Agent Status</span>
+            <span class="text-gray-400">{{ agentStatus === 'running' ? '🟢 Running' : '🔴 Stopped' }}</span>
+          </div>
+          <button (click)="restartAgent()"
+                  [disabled]="agentRestarting"
+                  class="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg font-medium transition-colors">
+            {{ agentRestarting ? 'Restarting...' : '🔄 Restart Agent' }}
+          </button>
+        </div>
+      </div>
+
       <!-- AI Model Selection -->
       <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
         <h3 class="text-lg font-semibold text-white mb-4">🤖 AI Model</h3>
@@ -28,7 +45,7 @@ interface Model {
           <div>
             <label class="block text-gray-400 text-sm mb-2">Select Model</label>
             <select [(ngModel)]="selectedModel"
-                    (ngModelChange)="saveModel()"
+                    (ngModelChange)="onModelChange()"
                     class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary-500">
               <option *ngFor="let model of models" [value]="model.id">
                 {{ model.name }} ({{ model.provider }})
@@ -40,15 +57,20 @@ interface Model {
             <label class="block text-gray-400 text-sm mb-2">API Key (optional)</label>
             <input type="password" 
                    [(ngModel)]="apiKey"
-                   (ngModelChange)="saveModel()"
+                   (blur)="saveModel()"
                    placeholder="Your API key for selected model"
                    class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary-500">
           </div>
         </div>
         
-        <div class="mt-4 p-3 bg-gray-700 rounded-lg">
-          <span class="text-gray-400 text-sm">Current model: </span>
-          <span class="text-primary-400 font-medium">{{ getCurrentModelName() }}</span>
+        <div class="mt-4 p-3 bg-gray-700 rounded-lg flex items-center justify-between">
+          <div>
+            <span class="text-gray-400 text-sm">Current model: </span>
+            <span class="text-primary-400 font-medium">{{ getCurrentModelName() }}</span>
+          </div>
+          <div *ngIf="agentRestarting" class="text-yellow-400 text-sm animate-pulse">
+            ⏳ Agent restarting with new model...
+          </div>
         </div>
       </div>
 
@@ -147,7 +169,7 @@ interface Model {
         </div>
       </div>
 
-      <!-- Success Message -->
+      <!-- Messages -->
       <div *ngIf="message" 
            class="bg-green-600/20 border border-green-600 text-green-400 px-4 py-3 rounded-lg">
         {{ message }}
@@ -155,7 +177,7 @@ interface Model {
     </div>
   `
 })
-export class ConfigComponent implements OnInit {
+export class ConfigComponent implements OnInit, OnDestroy {
   models: Model[] = [
     { id: 'minimax/MiniMax-M2.5', name: 'MiniMax M2.5', provider: 'minimax' },
     { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'openai' },
@@ -173,22 +195,54 @@ export class ConfigComponent implements OnInit {
   downloading = false;
   message = '';
   
+  agentStatus = 'unknown';
+  agentRestarting = false;
+  
   repoStatus = {
     downloaded: false,
     files: 0
   };
 
+  private statusInterval: any;
+
   constructor(private http: HttpClient) {}
 
   ngOnInit() {
     this.loadExistingConfig();
-    this.loadModels();
+    this.checkAgentStatus();
+    
+    // Poll agent status
+    this.statusInterval = setInterval(() => this.checkAgentStatus(), 5000);
   }
 
-  loadModels() {
-    this.http.get<any>('http://localhost:3000/api/models')
+  ngOnDestroy() {
+    if (this.statusInterval) {
+      clearInterval(this.statusInterval);
+    }
+  }
+
+  checkAgentStatus() {
+    this.http.get<any>('http://localhost:3000/api/agent/status')
       .subscribe({
-        next: (res) => this.models = res.models
+        next: (res) => this.agentStatus = res.status || 'unknown'
+      });
+  }
+
+  restartAgent() {
+    this.agentRestarting = true;
+    this.http.post('http://localhost:3000/api/agent/restart', {})
+      .subscribe({
+        next: () => {
+          this.showMessage('Agent restarting...');
+          // Wait for agent to come back
+          setTimeout(() => {
+            this.agentRestarting = false;
+            this.checkAgentStatus();
+          }, 10000);
+        },
+        error: () => {
+          this.agentRestarting = false;
+        }
       });
   }
 
@@ -211,13 +265,28 @@ export class ConfigComponent implements OnInit {
       });
   }
 
+  onModelChange() {
+    this.saveModel();
+  }
+
   saveModel() {
+    this.agentRestarting = true;
+    
     this.http.post('http://localhost:3000/api/config/model', {
       model: this.selectedModel,
       api_key: this.apiKey
     }).subscribe({
-      next: () => {
-        this.showMessage('Model updated!');
+      next: (res) => {
+        this.showMessage(`Model updated to ${this.getCurrentModelName()}! Agent restarting...`);
+        
+        // Poll until agent is back
+        setTimeout(() => {
+          this.checkAgentStatus();
+          this.agentRestarting = false;
+        }, 8000);
+      },
+      error: () => {
+        this.agentRestarting = false;
       }
     });
   }
@@ -285,6 +354,6 @@ export class ConfigComponent implements OnInit {
 
   showMessage(msg: string) {
     this.message = msg;
-    setTimeout(() => this.message = '', 3000);
+    setTimeout(() => this.message = '', 5000);
   }
 }
