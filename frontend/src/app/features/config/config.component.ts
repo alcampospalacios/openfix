@@ -24,7 +24,6 @@ interface LogEntry {
         <h2 class="text-2xl font-bold">Configuration</h2>
         <p class="opacity-60">Configure your repositories, AI model, and Firebase projects</p>
       </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
 
       <!-- Agent Status -->
       <div class="card bg-base-200">
@@ -34,18 +33,13 @@ interface LogEntry {
               <div class="w-3 h-3 rounded-full" 
                    [class.bg-success]="agentStatus === 'running'"
                    [class.bg-error]="agentStatus !== 'running'"></div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
               <span class="font-medium">Agent Status</span>
               <span class="opacity-60">{{ agentStatus === 'running' ? 'Running' : 'Stopped' }}</span>
             </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
             <button (click)="refreshStatus()" class="btn btn-ghost btn-sm">Refresh</button>
           </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
         </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
       </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
 
       <!-- AI Model -->
       <div class="card bg-base-200">
@@ -61,7 +55,6 @@ interface LogEntry {
                 }
               </select>
             </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
 
             <div class="form-control">
               <label class="label"><span class="label-text opacity-60">API Key</span></label>
@@ -69,13 +62,10 @@ interface LogEntry {
                      [(ngModel)]="apiKey" (ngModelChange)="onFieldChange()"
                      placeholder="Enter API key" class="input input-bordered">
             </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
           </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
           
           <div class="mt-4 flex items-center justify-between flex-wrap gap-2">
             <div><span class="opacity-60 text-sm">Current: </span><span class="text-primary font-medium">{{ getCurrentModelName() }}</span></div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
             <div class="flex gap-2 h-10">
               <button (click)="checkAgent()" [disabled]="checkingAgent" class="btn btn-info">
                 @if (checkingAgent) { <span class="loading loading-spinner loading-sm"></span> Checking... } @else { 🧪 Check Agent }
@@ -84,18 +74,13 @@ interface LogEntry {
                 @if (saving) { <span class="loading loading-spinner loading-sm"></span> Saving... } @else { 💾 Save & Restart }
               </button>
             </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
           </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
           
           @if (agentResponse) {
             <div class="mt-4 bg-base-300 rounded p-3 text-sm whitespace-pre-wrap">{{ agentResponse }}</div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
           }
         </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
       </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
 
       <!-- GitHub Config -->
       <div class="card bg-base-200">
@@ -106,19 +91,14 @@ interface LogEntry {
               <label class="label"><span class="label-text opacity-60">Repository URL</span></label>
               <input type="text" [(ngModel)]="githubRepo" placeholder="owner/repo" class="input input-bordered">
             </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
             <div class="form-control">
               <label class="label"><span class="label-text opacity-60">GitHub Token</span></label>
               <input type="password" [(ngModel)]="githubToken" placeholder="ghp_xxxxx" class="input input-bordered">
             </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
             <button (click)="saveGitHubConfig()" [disabled]="!githubRepo || !githubToken" class="btn btn-primary">Save</button>
           </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
         </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
       </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
 
       <!-- Firebase Config -->
       <div class="card bg-base-200">
@@ -129,18 +109,13 @@ interface LogEntry {
               <label class="label"><span class="label-text opacity-60">Project ID</span></label>
               <input type="text" [(ngModel)]="firebaseProjectId" placeholder="my-app-prod" class="input input-bordered">
             </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
             <div class="form-control">
               <label class="label"><span class="label-text opacity-60">Service Account JSON</span></label>
               <textarea [(ngModel)]="firebaseCredentials" placeholder='{"type": "service_account"}' rows="3" class="textarea textarea-bordered font-mono text-sm"></textarea>
             </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
           </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
         </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
       </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
 
       <!-- Webhook -->
       <div class="card bg-base-200">
@@ -151,11 +126,8 @@ interface LogEntry {
             <code class="flex-1 bg-base-300 px-4 py-2 rounded text-primary">/api/webhook/firebase</code>
             <button (click)="copyUrl()" class="btn btn-ghost btn-sm">Copy</button>
           </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
         </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
       </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
 
       <!-- Logs Panel -->
       <div class="card bg-base-200">
@@ -164,34 +136,25 @@ interface LogEntry {
             <h3 class="card-title">📋 API Logs</h3>
             <button (click)="clearLogs()" class="btn btn-ghost btn-xs">Clear</button>
           </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
           <div class="bg-base-300 rounded p-2 h-48 overflow-y-auto font-mono text-xs space-y-1">
             @for (log of logs; track log.time) {
               <div><span class="opacity-50">{{ log.time }}</span> {{ log.message }}</div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
             }
             @if (logs.length === 0) {
               <div class="opacity-50">No logs yet...</div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
             }
           </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
         </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
       </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
 
       @if (toastMessage) {
         <div class="toast toast-end">
           <div [class]="toastType === 'success' ? 'alert alert-success' : 'alert alert-error'">
             <span>{{ toastMessage }}</span>
           </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
         </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
       }
     </div>
-            <button (click)="saveFirebaseConfig()" [disabled]="!firebaseProjectId" class="btn btn-primary">Save</button>
   `
 })
 export class ConfigComponent implements OnInit, OnDestroy {
@@ -383,27 +346,6 @@ export class ConfigComponent implements OnInit, OnDestroy {
     navigator.clipboard.writeText('/api/webhook/firebase');
     this.addLog('Copied webhook URL to clipboard');
     this.showToast('Copied!', 'success');
-  }
-
-  saveFirebaseConfig() {
-    this.addLog(`POST /api/config { firebase: ${this.firebaseProjectId} }`);
-    this.http.post('/api/config', {
-      repo_id: 'default',
-      github_repo: this.githubRepo,
-      github_token: this.githubToken,
-      firebase_project: this.firebaseProjectId,
-      firebase_credentials: this.firebaseCredentials,
-      model: this.selectedModel
-    }).subscribe({
-      next: () => {
-        this.addLog('RESPONSE: firebase config saved');
-        this.showToast('Firebase config saved!', 'success');
-      },
-      error: (err) => {
-        this.addLog(`ERROR: ${err.message}`);
-        this.showToast('Error saving', 'error');
-      }
-    });
   }
 
   showToast(msg: string, type: 'success' | 'error') {
