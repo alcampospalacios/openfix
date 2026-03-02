@@ -51,7 +51,7 @@ interface Model {
                 <span class="label-text opacity-60">Select Model</span>
               </label>
               <select [(ngModel)]="selectedModel"
-                      (ngModelChange)="onModelChange()"
+                      (ngModelChange)="onFieldChange()"
                       class="select select-bordered">
                 @for (model of models; track model.id) {
                   <option [value]="model.id">{{ model.name }} ({{ model.provider }})</option>
@@ -61,13 +61,28 @@ interface Model {
 
             <div class="form-control">
               <label class="label">
-                <span class="label-text opacity-60">API Key (optional)</span>
+                <span class="label-text opacity-60">API Key</span>
               </label>
-              <input type="password" 
-                     [(ngModel)]="apiKey"
-                     (blur)="saveModel()"
-                     placeholder="Your API key for selected model"
-                     class="input input-bordered">
+              <div class="flex gap-2">
+                <input type="password" 
+                       [(ngModel)]="apiKey"
+                       (ngModelChange)="onFieldChange()"
+                       placeholder="Enter API key for selected model"
+                       class="input input-bordered flex-1">
+                <button (click)="toggleApiKeyVisibility()"
+                        class="btn btn-ghost btn-square">
+                  @if (showApiKey) {
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                    </svg>
+                  } @else {
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  }
+                </button>
+              </div>
             </div>
           </div>
           
@@ -76,9 +91,16 @@ interface Model {
               <span class="opacity-60 text-sm">Current model: </span>
               <span class="text-primary font-medium">{{ getCurrentModelName() }}</span>
             </div>
-            @if (agentRestarting) {
-              <span class="text-warning animate-pulse">Agent restarting with new model...</span>
-            }
+            <button (click)="saveAndRestart()"
+                    [disabled]="!hasChanges || saving"
+                    class="btn btn-primary">
+              @if (saving) {
+                <span class="loading loading-spinner loading-sm"></span>
+                Saving...
+              } @else {
+                Save & Restart
+              }
+            </button>
           </div>
         </div>
       </div>
@@ -177,8 +199,8 @@ interface Model {
       <div class="card bg-base-200">
         <div class="card-body">
           <h3 class="card-title">Firebase Webhook URL</h3>
-          <p class="opacity-60 text-sm mb-4">
-            Configure this URL in Firebase Crashlytics to receive crash notifications:
+          <p class="opacity--4">
+           60 text-sm mb-4">Configure this URL in Firebase Crashlytics to receive crash notifications:
           </p>
           <div class="flex items-center gap-2">
             <code class="flex-1 bg-base-300 px-4 py-2 rounded text-primary">
@@ -191,9 +213,12 @@ interface Model {
         </div>
       </div>
 
-      @if (message) {
-        <div class="alert alert-success">
-          <span>{{ message }}</span>
+      <!-- Success Toast -->
+      @if (showToast) {
+        <div class="toast toast-end">
+          <div class="alert alert-success">
+            <span>{{ toastMessage }}</span>
+          </div>
         </div>
       }
     </div>
@@ -209,16 +234,23 @@ export class ConfigComponent implements OnInit, OnDestroy {
   
   selectedModel = 'minimax/MiniMax-M2.5';
   apiKey = '';
+  originalApiKey = '';
   
   githubRepo = '';
   githubToken = '';
   firebaseProjectId = '';
   firebaseCredentials = '';
   downloading = false;
-  message = '';
   
   agentStatus = 'unknown';
   agentRestarting = false;
+  saving = false;
+  
+  hasChanges = false;
+  showApiKey = false;
+  
+  showToast = false;
+  toastMessage = '';
   
   repoStatus = {
     downloaded: false,
@@ -241,6 +273,14 @@ export class ConfigComponent implements OnInit, OnDestroy {
     }
   }
 
+  onFieldChange() {
+    this.hasChanges = this.apiKey !== this.originalApiKey;
+  }
+
+  toggleApiKeyVisibility() {
+    this.showApiKey = !this.showApiKey;
+  }
+
   checkAgentStatus() {
     this.http.get<any>('http://localhost:3000/api/agent/status')
       .subscribe({
@@ -253,7 +293,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
     this.http.post('http://localhost:3000/api/agent/restart', {})
       .subscribe({
         next: () => {
-          this.showMessage('Agent restarting...');
+          this.showToastMessage('Agent restarting...');
           setTimeout(() => {
             this.agentRestarting = false;
             this.checkAgentStatus();
@@ -263,6 +303,36 @@ export class ConfigComponent implements OnInit, OnDestroy {
           this.agentRestarting = false;
         }
       });
+  }
+
+  saveAndRestart() {
+    this.saving = true;
+    
+    this.http.post('http://localhost:3000/api/config/model', {
+      model: this.selectedModel,
+      api_key: this.apiKey
+    }).subscribe({
+      next: () => {
+        this.originalApiKey = this.apiKey;
+        this.hasChanges = false;
+        
+        // Wait a bit then restart agent
+        setTimeout(() => {
+          this.restartAgent();
+        }, 500);
+        
+        this.showToastMessage(`Model updated to ${this.getCurrentModelName()}! Agent restarting...`);
+        
+        setTimeout(() => {
+          this.saving = false;
+          this.checkAgentStatus();
+        }, 12000);
+      },
+      error: () => {
+        this.saving = false;
+        this.showToastMessage('Error saving configuration');
+      }
+    });
   }
 
   loadExistingConfig() {
@@ -277,36 +347,13 @@ export class ConfigComponent implements OnInit, OnDestroy {
             this.firebaseProjectId = repo.firebase_project;
             this.selectedModel = repo.model || 'minimax/MiniMax-M2.5';
             this.apiKey = repo.api_key || '';
+            this.originalApiKey = this.apiKey;
+            this.hasChanges = false;
             this.checkRepoStatus(keys[0]);
           }
         },
         error: () => console.log('No config yet')
       });
-  }
-
-  onModelChange() {
-    this.saveModel();
-  }
-
-  saveModel() {
-    this.agentRestarting = true;
-    
-    this.http.post('http://localhost:3000/api/config/model', {
-      model: this.selectedModel,
-      api_key: this.apiKey
-    }).subscribe({
-      next: () => {
-        this.showMessage(`Model updated to ${this.getCurrentModelName()}! Agent restarting...`);
-        
-        setTimeout(() => {
-          this.checkAgentStatus();
-          this.agentRestarting = false;
-        }, 8000);
-      },
-      error: () => {
-        this.agentRestarting = false;
-      }
-    });
   }
 
   saveConfig() {
@@ -321,10 +368,10 @@ export class ConfigComponent implements OnInit, OnDestroy {
       model: this.selectedModel
     }).subscribe({
       next: () => {
-        this.showMessage('Configuration saved!');
+        this.showToastMessage('Configuration saved!');
         this.checkRepoStatus(repo_id);
       },
-      error: () => console.log('Error saving config')
+      error: () => this.showToastMessage('Error saving config')
     });
   }
 
@@ -370,8 +417,12 @@ export class ConfigComponent implements OnInit, OnDestroy {
     navigator.clipboard.writeText('http://localhost:3000/api/webhook/firebase');
   }
 
-  showMessage(msg: string) {
-    this.message = msg;
-    setTimeout(() => this.message = '', 5000);
+  showToastMessage(msg: string) {
+    this.toastMessage = msg;
+    this.showToast = true;
+    setTimeout(() => {
+      this.showToast = false;
+      this.toastMessage = '';
+    }, 5000);
   }
 }
