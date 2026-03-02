@@ -21,8 +21,8 @@ interface Crash {
       <div class="flex items-center justify-between">
         <div>
           <h2 class="text-2xl font-bold text-white">Crashes</h2>
-          <p class="text-gray-400">All reported crashes</div>
-        </p>
+          <p class="text-gray-400">All reported crashes</p>
+        </div>
         <button (click)="refresh()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white">
           Refresh
         </button>
@@ -79,7 +79,7 @@ interface Crash {
                     </a>
                   }
                   @if (!crash.prUrl) {
-                    <span class="text-gray-500">—</span>
+                    <span class="text-gray-500">-</span>
                   }
                 </td>
               </tr>
