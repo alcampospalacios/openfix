@@ -11,7 +11,8 @@ const path = require('path');
 // Configuration
 const CONFIG = {
   backendUrl: process.env.BACKEND_URL || 'http://backend:3000',
-  pollingInterval: 30000,
+  pollingInterval: 30000,        // Check for crashes every 30 seconds
+  heartbeatInterval: 180000,       // Send heartbeat every 3 minutes
 };
 
 // Current config
@@ -31,11 +32,38 @@ async function startAgent() {
   
   await loadConfig();
   
+  // Send heartbeat every 3 minutes
+  setInterval(async () => {
+    await sendHeartbeat();
+  }, CONFIG.heartbeatInterval);
+  
+  // Initial heartbeat
+  await sendHeartbeat();
+  
+  // Poll for crashes every 30 seconds
   setInterval(async () => {
     await checkForCrashes();
   }, CONFIG.pollingInterval);
   
   await checkForCrashes();
+}
+
+/**
+ * Send heartbeat to backend - SIMPLE: just alive
+ */
+async function sendHeartbeat() {
+  try {
+    await fetch(`${CONFIG.backendUrl}/api/agent/heartbeat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: 'running'
+      })
+    });
+    console.log('💓 Heartbeat sent');
+  } catch (error) {
+    console.log('⚠️  Failed to send heartbeat:', error.message);
+  }
 }
 
 /**
@@ -69,7 +97,7 @@ async function loadConfig() {
  * Check for pending crashes
  */
 async function checkForCrashes() {
-  await loadConfig(); // Refresh config
+  await loadConfig();
   
   try {
     const response = await fetch(`${CONFIG.backendUrl}/api/crashes?status=pending`);
@@ -96,27 +124,20 @@ async function processCrash(crash) {
   console.log(`   Model: ${currentConfig.model}`);
   
   try {
-    // 1. Ensure repo is available
     const repoDir = await ensureRepoCloned();
-    
-    // 2. Analyze crash and generate fix with AI
     console.log('🤖 Generating fix with AI...');
     const analysis = await analyzeCrashWithAI(crash, repoDir);
     
-    // 3. Create fix branch
     const branchName = `fix/${crash.id}`;
     console.log(`🌿 Creating branch: ${branchName}`);
     await createFixBranch(branchName);
     
-    // 4. Apply fix
     console.log('🔨 Applying fix...');
     await applyFix(branchName, crash, analysis, repoDir);
     
-    // 5. Create PR
     console.log('📝 Creating Pull Request...');
     const prUrl = await createPullRequest(branchName, crash);
     
-    // 6. Update status
     await updateCrashStatus(crash.id, 'fixed', prUrl);
     
     console.log(`✅ Crash ${crash.id} fixed!`);
@@ -132,10 +153,8 @@ async function processCrash(crash) {
  * Analyze crash and generate fix using AI
  */
 async function analyzeCrashWithAI(crash, repoDir) {
-  // 1. Find relevant code files
   const relevantFiles = await findRelevantFiles(crash, repoDir);
   
-  // 2. Build context for AI
   const context = {
     crash: {
       id: crash.id,
@@ -143,11 +162,10 @@ async function analyzeCrashWithAI(crash, repoDir) {
       description: crash.description,
       severity: crash.severity
     },
-    relevantFiles: relevantFiles.slice(0, 5), // Limit to 5 files
+    relevantFiles: relevantFiles.slice(0, 5),
     model: currentConfig.model
   };
   
-  // 3. Call AI API based on model selection
   let fix = '';
   
   switch (currentConfig.model) {
@@ -174,18 +192,8 @@ async function analyzeCrashWithAI(crash, repoDir) {
  * Generate fix using MiniMax
  */
 async function generateFixWithMiniMax(context) {
-  // Placeholder - implement actual API call
   console.log(`   Using MiniMax M2.5...`);
-  
-  return {
-    explanation: 'Fix generated using MiniMax M2.5',
-    changes: [
-      {
-        file: 'src/auth/auth.service.ts',
-        content: `\n// Fix: Added null check\nif (value === null || value === undefined) {\n  console.error('Null value detected');\n  return;\n}\n`
-      }
-    ]
-  };
+  return { explanation: 'Fix generated using MiniMax M2.5', changes: [] };
 }
 
 /**
@@ -193,13 +201,10 @@ async function generateFixWithMiniMax(context) {
  */
 async function generateFixWithOpenAI(context) {
   console.log(`   Using GPT-4o...`);
-  
   if (!currentConfig.apiKey) {
     console.log('⚠️  No OpenAI API key, using fallback');
     return await generateFixWithMiniMax(context);
   }
-  
-  // Implement OpenAI API call
   return { explanation: 'Fix from OpenAI', changes: [] };
 }
 
@@ -208,12 +213,10 @@ async function generateFixWithOpenAI(context) {
  */
 async function generateFixWithClaude(context) {
   console.log(`   Using Claude 3.5...`);
-  
   if (!currentConfig.apiKey) {
     console.log('⚠️  No Claude API key, using fallback');
     return await generateFixWithMiniMax(context);
   }
-  
   return { explanation: 'Fix from Claude', changes: [] };
 }
 
@@ -222,12 +225,10 @@ async function generateFixWithClaude(context) {
  */
 async function generateFixWithGemini(context) {
   console.log(`   Using Gemini 2.0...`);
-  
   if (!currentConfig.apiKey) {
     console.log('⚠️  No Gemini API key, using fallback');
     return await generateFixWithMiniMax(context);
   }
-  
   return { explanation: 'Fix from Gemini', changes: [] };
 }
 
@@ -238,32 +239,25 @@ async function findRelevantFiles(crash, repoDir) {
   const files = [];
   
   try {
-    // Simple search based on crash title keywords
     const keywords = crash.title.toLowerCase()
       .replace(/[^a-z0-9]/g, ' ')
       .split(' ')
       .filter(k => k.length > 3)
       .slice(0, 3);
     
-    // Search for files
     const searchCmd = `find ${repoDir}/src -type f -name "*.ts" -o -name "*.js" 2>/dev/null | head -20`;
     const result = execSync(searchCmd, { encoding: 'utf8' });
     
     const allFiles = result.trim().split('\n');
     
-    // Match files with keywords
     for (const file of allFiles) {
       for (const keyword of keywords) {
         if (file.toLowerCase().includes(keyword)) {
-          files.push({
-            path: file,
-            name: path.basename(file)
-          });
+          files.push({ path: file, name: path.basename(file) });
           break;
         }
       }
     }
-    
   } catch (e) {
     console.log('   Could not search files');
   }
@@ -306,7 +300,6 @@ async function createFixBranch(branchName) {
  * Apply fix to code
  */
 async function applyFix(branchName, crash, fix, repoDir) {
-  // Create a fix summary file
   const fixFile = path.join(repoDir, 'FIXES.md');
   
   const content = `
@@ -330,13 +323,11 @@ ${currentConfig.model}
   
   fs.appendFileSync(fixFile, content);
   
-  // Commit the fix
   execSync(`git add . && git commit -m "fix(${crash.id}): resolve ${crash.title}"`, {
     cwd: repoDir,
     stdio: 'inherit'
   });
   
-  // Push branch
   execSync(`git push -u origin ${branchName}`, {
     cwd: repoDir,
     stdio: 'inherit',
