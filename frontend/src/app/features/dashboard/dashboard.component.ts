@@ -55,33 +55,35 @@ interface Stats {
         </div>
         
         <div class="divide-y divide-gray-700">
-          <div *ngFor="let crash of crashes" 
-               class="px-6 py-4 flex items-center justify-between hover:bg-gray-750">
-            <div class="flex items-center space-x-4">
-              <div class="w-2 h-2 rounded-full" 
-                   [ngClass]="{
-                     'bg-yellow-400': crash.status === 'pending',
-                     'bg-green-400': crash.status === 'fixed',
-                     'bg-red-400': crash.status === 'failed'
-                   }"></div>
-              <div>
-                <div class="text-white">{{ crash.title }}</div>
-                <div class="text-gray-500 text-sm">{{ crash.id }}</div>
+          @for (crash of crashes; track crash.id) {
+            <div class="px-6 py-4 flex items-center justify-between">
+              <div class="flex items-center space-x-4">
+                <div class="w-2 h-2 rounded-full" 
+                     [class.bg-yellow-400]="crash.status === 'pending'"
+                     [class.bg-green-400]="crash.status === 'fixed'"
+                     [class.bg-red-400]="crash.status === 'failed'"></div>
+                <div>
+                  <div class="text-white">{{ crash.title }}</div>
+                  <div class="text-gray-500 text-sm">{{ crash.id }}</div>
+                </div>
               </div>
+              <span class="px-3 py-1 rounded-full text-xs font-medium"
+                    [class.bg-yellow-400/20]="crash.status === 'pending'"
+                    [class.text-yellow-400]="crash.status === 'pending'"
+                    [class.bg-green-400/20]="crash.status === 'fixed'"
+                    [class.text-green-400]="crash.status === 'fixed'"
+                    [class.bg-red-400/20]="crash.status === 'failed'"
+                    [class.text-red-400]="crash.status === 'failed'">
+                {{ crash.status }}
+              </span>
             </div>
-            <span class="px-3 py-1 rounded-full text-xs font-medium"
-                  [ngClass]="{
-                    'bg-yellow-400/20 text-yellow-400': crash.status === 'pending',
-                    'bg-green-400/20 text-green-400': crash.status === 'fixed',
-                    'bg-red-400/20 text-red-400': crash.status === 'failed'
-                  }">
-              {{ crash.status }}
-            </span>
-          </div>
+          }
           
-          <div *ngIf="crashes.length === 0" class="px-6 py-8 text-center text-gray-500">
-            No crashes yet. Configure your repository to start monitoring.
-          </div>
+          @if (crashes.length === 0) {
+            <div class="px-6 py-8 text-center text-gray-500">
+              No crashes yet. Configure your repository to start monitoring.
+            </div>
+          }
         </div>
       </div>
     </div>
@@ -100,12 +102,12 @@ export class DashboardComponent implements OnInit {
   loadData() {
     this.http.get<Crash[]>('http://localhost:3000/api/crashes')
       .subscribe({
-        next: (crashes) => {
+        next: (crashes: Crash[]) => {
           this.crashes = crashes.slice(-10).reverse();
           this.stats.total = crashes.length;
-          this.stats.pending = crashes.filter(c => c.status === 'pending').length;
-          this.stats.fixed = crashes.filter(c => c.status === 'fixed').length;
-          this.stats.failed = crashes.filter(c => c.status === 'failed').length;
+          this.stats.pending = crashes.filter((c: Crash) => c.status === 'pending').length;
+          this.stats.fixed = crashes.filter((c: Crash) => c.status === 'fixed').length;
+          this.stats.failed = crashes.filter((c: Crash) => c.status === 'failed').length;
         },
         error: () => console.log('Backend not available')
       });

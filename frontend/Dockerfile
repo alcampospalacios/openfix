@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Install Angular CLI globally
-RUN npm install -g @angular/cli@latest
+RUN npm install -g @angular/cli@18
 
 # Copy package files
 COPY package.json ./
