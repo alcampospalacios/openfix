@@ -41,33 +41,36 @@ fi
 
 echo -e "${GREEN}✅ Docker ready${NC}"
 
-# Create config directory
-mkdir -p config
+# Create required directories
+mkdir -p docker/data docker/repos
 
-# Copy environment template
-if [ ! -f .env ]; then
-    cp config/env.example .env 2>/dev/null || true
-    echo -e "${YELLOW}⚠️  Please edit .env with your GitHub token${NC}"
+# Create empty config if not exists
+if [ ! -f config/env.example ]; then
+    echo -e "${YELLOW}Creating config...${NC}"
+    mkdir -p config
 fi
 
-# Build containers
+# Build and start
 echo -e "${BLUE}🔨 Building containers...${NC}"
 docker-compose build
 
-# Start services
 echo -e "${BLUE}▶️  Starting Openfix...${NC}"
 docker-compose up -d
 
-# Wait for services
 echo -e "${BLUE}⏳ Waiting for services...${NC}"
-sleep 10
+sleep 15
 
 echo ""
 echo -e "${GREEN}✅ Openfix is running!${NC}"
 echo ""
 echo "  📱 Frontend:   http://localhost:4200"
 echo "  🔌 Backend:   http://localhost:3000"
-echo "  🤖 OpenClaw: http://localhost:18789"
+echo ""
+echo "Next steps:"
+echo "  1. Open http://localhost:4200"
+echo "  2. Go to Config tab"
+echo "  3. Add your GitHub repo and token"
+echo "  4. Download repository"
 echo ""
 echo "Useful commands:"
 echo "  docker-compose logs -f      # View logs"
