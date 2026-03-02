@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -64,12 +64,21 @@ interface LogEntry {
             </div>
           </div>
           
-          <div class="mt-4 flex items-center justify-between">
+          <div class="mt-4 flex items-center justify-between flex-wrap gap-2">
             <div><span class="opacity-60 text-sm">Current: </span><span class="text-primary font-medium">{{ getCurrentModelName() }}</span></div>
-            <button (click)="saveAndRestart()" [disabled]="!hasChanges || saving" class="btn btn-primary">
-              @if (saving) { <span class="loading loading-spinner loading-sm"></span> Saving... } @else { Save & Restart }
-            </button>
+            <div class="flex gap-2">
+              <button (click)="checkAgent()" [disabled]="checkingAgent" class="btn btn-info btn-sm">
+                @if (checkingAgent) { <span class="loading loading-spinner loading-sm"></span> Checking... } @else { 🧪 Check Agent }
+              </button>
+              <button (click)="saveAndRestart()" [disabled]="!hasChanges || saving" class="btn btn-primary">
+                @if (saving) { <span class="loading loading-spinner loading-sm"></span> Saving... } @else { 💾 Save & Restart }
+              </button>
+            </div>
           </div>
+          
+          @if (agentResponse) {
+            <div class="mt-4 bg-base-300 rounded p-3 text-sm whitespace-pre-wrap">{{ agentResponse }}</div>
+          }
         </div>
       </div>
 
@@ -148,7 +157,7 @@ interface LogEntry {
     </div>
   `
 })
-export class ConfigComponent implements OnInit {
+export class ConfigComponent implements OnInit, OnDestroy {
   models: Model[] = [
     { id: 'minimax/MiniMax-M2.5', name: 'MiniMax M2.5', provider: 'minimax' },
     { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'openai' },
@@ -170,6 +179,11 @@ export class ConfigComponent implements OnInit {
   hasChanges = false;
   showApiKey = false;
   
+  checkingAgent = false;
+  agentResponse = '';
+  currentMessageId = '';
+  pollInterval: any;
+  
   toastMessage = '';
   toastType: 'success' | 'error' = 'success';
   
@@ -180,6 +194,12 @@ export class ConfigComponent implements OnInit {
   ngOnInit() {
     this.loadConfig();
     this.checkAgentStatus();
+  }
+
+  ngOnDestroy() {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+    }
   }
 
   addLog(message: string) {
@@ -209,6 +229,47 @@ export class ConfigComponent implements OnInit {
 
   refreshStatus() {
     this.checkAgentStatus();
+  }
+
+  checkAgent() {
+    this.checkingAgent = true;
+    this.agentResponse = '';
+    
+    const message = 'Hola';
+    this.addLog(`POST /api/agent/test { text: "${message}" }`);
+    
+    this.http.post<any>('/api/agent/test', { text: message }).subscribe({
+      next: (res) => {
+        this.currentMessageId = res.messageId;
+        this.addLog(`RESPONSE: message sent, id = ${res.messageId}`);
+        
+        // Poll for response
+        this.pollInterval = setInterval(() => this.pollResponse(), 1000);
+      },
+      error: (err) => {
+        this.addLog(`ERROR: ${err.message}`);
+        this.checkingAgent = false;
+      }
+    });
+  }
+
+  pollResponse() {
+    if (!this.currentMessageId) return;
+    
+    this.http.get<any>(`/api/agent/test/${this.currentMessageId}`).subscribe({
+      next: (res) => {
+        if (res.hasResponse) {
+          clearInterval(this.pollInterval);
+          this.agentResponse = res.response;
+          this.addLog(`RESPONSE: ${res.response}`);
+          this.checkingAgent = false;
+        }
+      },
+      error: () => {
+        clearInterval(this.pollInterval);
+        this.checkingAgent = false;
+      }
+    });
   }
 
   saveAndRestart() {

@@ -23,6 +23,9 @@ let currentConfig = {
   apiKey: ''
 };
 
+// Message handler for test messages
+let messageHandler = null;
+
 /**
  * Main agent loop
  */
@@ -46,6 +49,63 @@ async function startAgent() {
   }, CONFIG.pollingInterval);
   
   await checkForCrashes();
+  
+  // Poll for test messages
+  setInterval(async () => {
+    await checkForTestMessages();
+  }, 5000);
+}
+
+/**
+ * Check for test messages from backend
+ */
+async function checkForTestMessages() {
+  try {
+    const response = await fetch(`${CONFIG.backendUrl}/api/agent/test-queue`);
+    const messages = await response.json();
+    
+    for (const msg of messages) {
+      console.log(`📨 Test message received: ${msg.text}`);
+      
+      // Process the message
+      const reply = processTestMessage(msg.text);
+      
+      // Send response back
+      await fetch(`${CONFIG.backendUrl}/api/agent/test-response`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          messageId: msg.id, 
+          response: reply 
+        })
+      });
+      
+      console.log(`📤 Response sent: ${reply}`);
+    }
+  } catch (error) {
+    // Silently ignore - no messages is fine
+  }
+}
+
+/**
+ * Process test message and generate response
+ */
+function processTestMessage(text) {
+  const lower = text.toLowerCase();
+  
+  if (lower.includes('hola') || lower.includes('hello') || lower.includes('hi')) {
+    return `👋 Hola! Estoy funcionando correctamente.\n\n🤖 Modelo: ${currentConfig.model}\n📦 Repo: ${currentConfig.githubRepo || 'No configurado'}\n⏰ Hora: ${new Date().toLocaleString()}`;
+  }
+  
+  if (lower.includes('status') || lower.includes('estado')) {
+    return `✅ Estado: Running\n🤖 Modelo: ${currentConfig.model}\n📦 Repo: ${currentConfig.githubRepo || 'No configurado'}`;
+  }
+  
+  if (lower.includes('help') || lower.includes('ayuda')) {
+    return `📋 Comandos disponibles:\n- hola/hello/hi: Saludar\n- status/estado: Ver estado\n- help/ayuda: Ver comandos`;
+  }
+  
+  return `✅ Mensaje recibido: "${text}"\n\n🤖 Estoy funcionando! Usa "help" para ver comandos disponibles.`;
 }
 
 /**

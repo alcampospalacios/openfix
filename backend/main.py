@@ -5,13 +5,15 @@ FastAPI - Lightweight API for receiving Firebase notifications
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Body
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import json
 import os
 import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
+import time
+import uuid
 
 app = FastAPI(title="Openfix API", version="1.0.0")
 
@@ -23,6 +25,19 @@ REPOS_DIR.mkdir(exist_ok=True)
 
 CRASHES_FILE = DATA_DIR / "crashes.json"
 CONFIG_FILE = DATA_DIR / "config.json"
+AGENT_STATUS_FILE = DATA_DIR / "agent_status.json"
+TEST_MESSAGES_FILE = DATA_DIR / "test_messages.json"
+
+# Test messages storage
+def load_test_messages():
+    if TEST_MESSAGES_FILE.exists():
+        with open(TEST_MESSAGES_FILE) as f:
+            return json.load(f)
+    return []
+
+def save_test_messages(messages):
+    with open(TEST_MESSAGES_FILE, 'w') as f:
+        json.dump(messages, f, indent=2)
 
 # Available models
 AVAILABLE_MODELS = [
@@ -53,6 +68,16 @@ def save_config(config):
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=2)
 
+def load_agent_status():
+    if AGENT_STATUS_FILE.exists():
+        with open(AGENT_STATUS_FILE) as f:
+            return json.load(f)
+    return {"status": "offline", "last_seen": None}
+
+def save_agent_status(status_data):
+    with open(AGENT_STATUS_FILE, 'w') as f:
+        json.dump(status_data, f, indent=2)
+
 # Models
 class CrashPayload(BaseModel):
     event: str
@@ -70,10 +95,21 @@ class ModelConfig(BaseModel):
     model: str
     api_key: Optional[str] = None
 
+class AgentHeartbeat(BaseModel):
+    status: str
+    model: Optional[str] = None
+
 class CrashUpdate(BaseModel):
     status: Optional[str] = None
     prUrl: Optional[str] = None
     error: Optional[str] = None
+
+class TestMessage(BaseModel):
+    text: str
+
+class TestResponse(BaseModel):
+    messageId: str
+    response: str
 
 @app.get("/")
 def root():
@@ -86,6 +122,91 @@ def health():
 @app.get("/api/models")
 def get_models():
     return {"models": AVAILABLE_MODELS}
+
+@app.post("/api/agent/heartbeat")
+def agent_heartbeat(heartbeat: AgentHeartbeat):
+    """Agent reports its status"""
+    status_data = {
+        "status": heartbeat.status,
+        "model": heartbeat.model,
+        "last_seen": datetime.utcnow().isoformat()
+    }
+    save_agent_status(status_data)
+    return {"status": "ok", "message": "Heartbeat received"}
+
+@app.get("/api/agent/status")
+def get_agent_status():
+    """Get agent status"""
+    status_data = load_agent_status()
+    
+    # Check if still alive (last seen < 5 minutes)
+    if status_data.get("last_seen"):
+        last_seen = datetime.fromisoformat(status_data["last_seen"])
+        now = datetime.utcnow()
+        minutes_ago = (now - last_seen).total_seconds() / 60
+        
+        if minutes_ago > 5:
+            status_data["status"] = "offline"
+    
+    return status_data
+
+# Test message endpoints
+@app.post("/api/agent/test")
+def send_test_message(message: TestMessage):
+    """Frontend sends a test message to the agent"""
+    messages = load_test_messages()
+    
+    msg_id = str(uuid.uuid4())[:8]
+    new_message = {
+        "id": msg_id,
+        "text": message.text,
+        "timestamp": datetime.utcnow().isoformat(),
+        "response": None
+    }
+    
+    messages.append(new_message)
+    save_test_messages(messages)
+    
+    return {"status": "sent", "messageId": msg_id, "text": message.text}
+
+@app.get("/api/agent/test-queue")
+def get_test_queue():
+    """Agent polls for pending test messages"""
+    messages = load_test_messages()
+    
+    # Return messages without response
+    pending = [m for m in messages if m.get("response") is None]
+    return pending
+
+@app.post("/api/agent/test-response")
+def send_test_response(response: TestResponse):
+    """Agent sends a response to a test message"""
+    messages = load_test_messages()
+    
+    for msg in messages:
+        if msg["id"] == response.messageId:
+            msg["response"] = response.response
+            msg["responded_at"] = datetime.utcnow().isoformat()
+            save_test_messages(messages)
+            return {"status": "ok"}
+    
+    raise HTTPException(status_code=404, detail="Message not found")
+
+@app.get("/api/agent/test/{message_id}")
+def get_test_response(message_id: str):
+    """Frontend polls for response to a test message"""
+    messages = load_test_messages()
+    
+    for msg in messages:
+        if msg["id"] == message_id:
+            return {
+                "id": msg["id"],
+                "text": msg["text"],
+                "response": msg.get("response"),
+                "hasResponse": msg.get("response") is not None
+            }
+    
+    raise HTTPException(status_code=404, detail="Message not found")
 
 @app.post("/api/config")
 def configure_repo(config: RepoConfig):
@@ -121,7 +242,6 @@ def configure_model(model_config: ModelConfig, background_tasks: BackgroundTasks
     return {"status": "configured", "model": model_config.model, "agent_restarting": True}
 
 def restart_agent():
-    """Restart the OpenClaw agent"""
     try:
         result = subprocess.run(
             ["docker-compose", "restart", "agent"],
@@ -147,24 +267,6 @@ def restart_agent():
 def restart_agent_manual(background_tasks: BackgroundTasks):
     background_tasks.add_task(restart_agent)
     return {"status": "restarting", "message": "Agent is restarting..."}
-
-@app.get("/api/agent/status")
-def get_agent_status():
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "--filter", "name=agent", "--format", "{{.Status}}"],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        if result.returncode == 0:
-            status = result.stdout.strip()
-            return {"status": "running" if status else "stopped", "docker_status": status}
-    except:
-        pass
-    
-    return {"status": "unknown"}
 
 @app.get("/api/repos")
 def get_repos():
