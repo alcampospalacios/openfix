@@ -8,14 +8,19 @@ from pydantic import BaseModel
 from typing import Optional, List
 import json
 import os
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
 app = FastAPI(title="Openfix API", version="1.0.0")
 
-# Storage file
+# Storage directories
 DATA_DIR = Path("/app/data")
 DATA_DIR.mkdir(exist_ok=True)
+REPOS_DIR = Path("/app/repos")
+REPOS_DIR.mkdir(exist_ok=True)
+
 CRASHES_FILE = DATA_DIR / "crashes.json"
 CONFIG_FILE = DATA_DIR / "config.json"
 
@@ -93,6 +98,90 @@ def get_repo(repo_id: str):
         raise HTTPException(status_code=404, detail="Repository not found")
     return config[repo_id]
 
+# NEW: Download repository
+@app.post("/api/repos/{repo_id}/download")
+def download_repo(repo_id: str, background_tasks: BackgroundTasks):
+    """Download repository for agent to work with"""
+    config = load_config()
+    
+    if repo_id not in config:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    
+    repo_config = config[repo_id]
+    github_repo = repo_config['github_repo']
+    github_token = repo_config['github_token']
+    
+    # Extract owner/repo from URL
+    # Accept: https://github.com/owner/repo or owner/repo
+    if '/' in github_repo and not github_repo.startswith('http'):
+        repo_name = github_repo
+    elif 'github.com' in github_repo:
+        # Extract from URL
+        parts = github_repo.replace('https://github.com/', '').replace('.git', '').split('/')
+        repo_name = '/'.join(parts[-2:])
+    else:
+        repo_name = github_repo
+    
+    target_dir = REPOS_DIR / repo_id
+    
+    # Start download in background
+    background_tasks.add_task(clone_repository, github_token, repo_name, target_dir)
+    
+    return {"status": "downloading", "repo_id": repo_id, "path": str(target_dir)}
+
+def clone_repository(token: str, repo_name: str, target_dir: Path):
+    """Clone repository in background"""
+    try:
+        # Remove existing if present
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        
+        # Clone with token
+        repo_url = f"https://{token}@github.com/{repo_name}.git"
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", repo_url, str(target_dir)],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        
+        if result.returncode != 0:
+            print(f"Failed to clone: {result.stderr}")
+        else:
+            print(f"Successfully cloned {repo_name}")
+            
+    except Exception as e:
+        print(f"Error cloning repo: {e}")
+
+# Check repo status
+@app.get("/api/repos/{repo_id}/status")
+def get_repo_status(repo_id: str):
+    """Check if repository is downloaded"""
+    config = load_config()
+    
+    if repo_id not in config:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    
+    github_repo = config[repo_id]['github_repo']
+    
+    # Determine path
+    if '/' in github_repo and not github_repo.startswith('http'):
+        repo_name = github_repo
+    elif 'github.com' in github_repo:
+        parts = github_repo.replace('https://github.com/', '').replace('.git', '').split('/')
+        repo_name = '/'.join(parts[-2:])
+    else:
+        repo_name = github_repo
+    
+    target_dir = REPOS_DIR / repo_id
+    
+    return {
+        "repo_id": repo_id,
+        "downloaded": target_dir.exists(),
+        "path": str(target_dir),
+        "files": len(list(target_dir.rglob('*'))) if target_dir.exists() else 0
+    }
+
 # Firebase webhook - receive crash notification
 @app.post("/api/webhook/firebase")
 async def firebase_webhook(payload: CrashPayload, background_tasks: BackgroundTasks):
@@ -121,7 +210,6 @@ async def firebase_webhook(payload: CrashPayload, background_tasks: BackgroundTa
 
 async def trigger_agent(crash: dict):
     """Notify OpenClaw agent to process the crash"""
-    # For now, just log - agent will poll for pending crashes
     print(f"📩 New crash detected: {crash['id']}")
 
 # Get all crashes

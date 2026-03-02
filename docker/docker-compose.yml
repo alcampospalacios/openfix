@@ -21,6 +21,7 @@ services:
       - "3000:3000"
     volumes:
       - ./data:/app/data
+      - ./repos:/app/repos
 
   # OpenClaw Agent
   agent:
@@ -33,7 +34,4 @@ services:
       backend:
         condition: service_started
     volumes:
-      - agent-cache:/tmp/openfix-repo
-
-volumes:
-  agent-cache:
+      - ./repos:/app/repos
