@@ -283,12 +283,20 @@ export class ConfigComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.loadExistingConfig();
     this.checkAgentStatus();
-    this.statusInterval = setInterval(() => this.checkAgentStatus(), 60000);
+    }
+
+  // Manual refresh only
+  refreshStatus() {
+    this.checkAgentStatus();
+  }
+
+// Disabled polling
+// // Manual refresh only - no polling
   }
 
   ngOnDestroy() {
     if (this.statusInterval) {
-      clearInterval(this.statusInterval);
+      // No polling needed - agent sends heartbeat
     }
   }
 
