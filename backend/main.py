@@ -3,7 +3,7 @@ Openfix Backend API
 FastAPI - Lightweight API for receiving Firebase notifications
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Body
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Body, Request
 from pydantic import BaseModel
 from typing import Optional, List
 import json
@@ -349,6 +349,58 @@ def get_repo_status(repo_id: str):
         "path": str(target_dir),
         "files": len(list(target_dir.rglob('*'))) if target_dir.exists() else 0
     }
+
+@app.post("/api/webhook/slack")
+async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Receive crash alerts from Slack (via Firebase Crashlytics integration)"""
+    try:
+        # Get raw body for verification
+        body = await request.body()
+        body_text = body.decode('utf-8')
+        
+        # Parse JSON
+        data = json.loads(body_text)
+        
+        # Extract crash info from Slack message
+        # Firebase sends blocks with crash info
+        blocks = data.get('blocks', [])
+        
+        crash_title = "New crash from Slack"
+        crash_description = ""
+        
+        for block in blocks:
+            if block.get('type') == 'section':
+                text = block.get('section', {}).get('text', {})
+                if isinstance(text, dict):
+                    crash_description += text.get('text', '') + "\n"
+        
+        # Also check for text field (simple format)
+        if data.get('text'):
+            crash_title = data.get('text', '')[:100]
+        
+        crash = {
+            "id": f"slack_{datetime.utcnow().timestamp()}",
+            "title": crash_title,
+            "description": crash_description,
+            "timestamp": datetime.utcnow().isoformat(),
+            "severity": "ERROR",
+            "status": "pending",
+            "source": "slack",
+            "prUrl": None,
+            "error": None
+        }
+        
+        crashes = load_crashes()
+        crashes.append(crash)
+        save_crashes(crashes)
+        
+        background_tasks.add_task(trigger_agent, crash)
+        
+        return {"status": "received", "source": "slack", "crash_id": crash["id"]}
+        
+    except Exception as e:
+        print(f"Slack webhook error: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.post("/api/webhook/firebase")
 async def firebase_webhook(payload: CrashPayload, background_tasks: BackgroundTasks):
