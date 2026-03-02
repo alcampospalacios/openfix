@@ -87,8 +87,8 @@ class RepoConfig(BaseModel):
     repo_id: str
     github_repo: str
     github_token: str
-    firebase_project: str
-    firebase_credentials: str
+    firebase_project: Optional[str] = ""
+    firebase_credentials: Optional[str] = ""
     model: Optional[str] = "minimax/MiniMax-M2.5"
 
 class ModelConfig(BaseModel):
