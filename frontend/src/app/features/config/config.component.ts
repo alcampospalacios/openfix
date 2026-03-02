@@ -283,7 +283,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.loadExistingConfig();
     this.checkAgentStatus();
-    this.statusInterval = setInterval(() => this.checkAgentStatus(), 5000);
+    this.statusInterval = setInterval(() => this.checkAgentStatus(), 60000);
   }
 
   ngOnDestroy() {
@@ -312,7 +312,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
     this.http.get<any>('/api/agent/status')
       .subscribe({
         next: (res) => {
-          this.agentStatus = res.status || 'unknown';
+          this.agentStatus = res.status || 'unknown'';
           this.addLog(`Agent status: ${this.agentStatus}`);
         },
         error: (err) => {
@@ -481,6 +481,6 @@ export class ConfigComponent implements OnInit, OnDestroy {
     setTimeout(() => {
       this.showToast = false;
       this.toastMessage = '';
-    }, 5000);
+    }, 60000);
   }
 }
