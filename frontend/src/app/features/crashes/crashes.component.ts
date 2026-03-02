@@ -17,80 +17,76 @@ interface Crash {
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="space-y-6">
+    <div class="space-y-6 p-4">
       <div class="flex items-center justify-between">
         <div>
-          <h2 class="text-2xl font-bold text-white">Crashes</h2>
-          <p class="text-gray-400">All reported crashes</p>
+          <h2 class="text-2xl font-bold">Crashes</h2>
+          <p class="text-base-content/60">All reported crashes</p>
         </div>
-        <button (click)="refresh()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white">
-          Refresh
-        </button>
+        <button (click)="refresh()" class="btn btn-primary btn-sm">Refresh</button>
       </div>
 
-      <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-        <table class="w-full">
-          <thead class="bg-gray-700">
-            <tr>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Status</th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Title</th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Severity</th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Date</th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">PR</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-700">
-            @for (crash of crashes; track crash.id) {
-              <tr class="hover:bg-gray-750">
-                <td class="px-6 py-4">
-                  @if (crash.status === 'pending') {
-                    <span class="px-2 py-1 rounded-full text-xs font-medium bg-yellow-400/20 text-yellow-400">
-                      {{ crash.status }}
-                    </span>
-                  }
-                  @if (crash.status === 'fixed') {
-                    <span class="px-2 py-1 rounded-full text-xs font-medium bg-green-400/20 text-green-400">
-                      {{ crash.status }}
-                    </span>
-                  }
-                  @if (crash.status === 'failed') {
-                    <span class="px-2 py-1 rounded-full text-xs font-medium bg-red-400/20 text-red-400">
-                      {{ crash.status }}
-                    </span>
-                  }
-                </td>
-                <td class="px-6 py-4 text-white">{{ crash.title }}</td>
-                <td class="px-6 py-4">
-                  @if (crash.severity === 'ERROR') {
-                    <span class="text-sm text-red-400">{{ crash.severity }}</span>
-                  }
-                  @if (crash.severity === 'WARNING') {
-                    <span class="text-sm text-yellow-400">{{ crash.severity }}</span>
-                  }
-                  @if (crash.severity === 'INFO') {
-                    <span class="text-sm text-blue-400">{{ crash.severity }}</span>
-                  }
-                </td>
-                <td class="px-6 py-4 text-gray-400 text-sm">{{ crash.timestamp | date:'short' }}</td>
-                <td class="px-6 py-4">
-                  @if (crash.prUrl) {
-                    <a [href]="crash.prUrl" target="_blank" class="text-primary-400 hover:text-primary-300">
-                      View PR
-                    </a>
-                  }
-                  @if (!crash.prUrl) {
-                    <span class="text-gray-500">-</span>
-                  }
-                </td>
-              </tr>
-            }
-          </tbody>
-        </table>
-        @if (crashes.length === 0) {
-          <div class="p-8 text-center text-gray-500">
-            No crashes recorded yet
+      <div class="card bg-base-200">
+        <div class="card-body">
+          <div class="overflow-x-auto">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Title</th>
+                  <th>Severity</th>
+                  <th>Date</th>
+                  <th>PR</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (crash of crashes; track crash.id) {
+                  <tr>
+                    <td>
+                      @if (crash.status === 'pending') {
+                        <span class="badge badge-warning">pending</span>
+                      }
+                      @if (crash.status === 'fixed') {
+                        <span class="badge badge-success">fixed</span>
+                      }
+                      @if (crash.status === 'failed') {
+                        <span class="badge badge-error">failed</span>
+                      }
+                    </td>
+                    <td>{{ crash.title }}</td>
+                    <td>
+                      @if (crash.severity === 'ERROR') {
+                        <span class="badge badge-error badge-sm">{{ crash.severity }}</span>
+                      }
+                      @if (crash.severity === 'WARNING') {
+                        <span class="badge badge-warning badge-sm">{{ crash.severity }}</span>
+                      }
+                      @if (crash.severity === 'INFO') {
+                        <span class="badge badge-info badge-sm">{{ crash.severity }}</span>
+                      }
+                    </td>
+                    <td class="text-base-content/60">{{ crash.timestamp | date:'short' }}</td>
+                    <td>
+                      @if (crash.prUrl) {
+                        <a [href]="crash.prUrl" target="_blank" class="link link-primary">View PR</a>
+                      }
+                      @if (!crash.prUrl) {
+                        <span class="text-base-content/40">-</span>
+                      }
+                    </td>
+                  </tr>
+                }
+                @if (crashes.length === 0) {
+                  <tr>
+                    <td colspan="5" class="text-center py-8 text-base-content/60">
+                      No crashes recorded yet
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
           </div>
-        }
+        </div>
       </div>
     </div>
   `

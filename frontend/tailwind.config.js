@@ -4,22 +4,28 @@ module.exports = {
     "./src/**/*.{html,ts}",
   ],
   theme: {
-    extend: {
-      colors: {
-        primary: {
-          50: '#eff6ff',
-          100: '#dbeafe',
-          200: '#bfdbfe',
-          300: '#93c5fd',
-          400: '#60a5fa',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          800: '#1e40af',
-          900: '#1e3a8a',
-        }
-      }
-    },
+    extend: {},
   },
-  plugins: [],
+  plugins: [
+    require('daisyui'),
+  ],
+  daisyui: {
+    themes: [
+      {
+        dracula: {
+          "primary": "#a855f7",
+          "secondary": "#d946ef",
+          "accent": "#22d3ee",
+          "neutral": "#1e1e2e",
+          "base-100": "#1e1e2e",
+          "base-200": "#181825",
+          "base-300": "#11111b",
+          "info": "#89b4fa",
+          "success": "#a6e3a1",
+          "warning": "#f9e2af",
+          "error": "#f38ba8",
+        },
+      },
+    ],
+  },
 }
