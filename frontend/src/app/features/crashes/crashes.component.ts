@@ -21,7 +21,7 @@ interface Crash {
       <div class="flex items-center justify-between">
         <div>
           <h2 class="text-2xl font-bold">Crashes</h2>
-          <p class="text-base-content/60">All reported crashes</p>
+          <p class="opacity-60">All reported crashes</p>
         </div>
         <button (click)="refresh()" class="btn btn-primary btn-sm">Refresh</button>
       </div>
@@ -65,20 +65,20 @@ interface Crash {
                         <span class="badge badge-info badge-sm">{{ crash.severity }}</span>
                       }
                     </td>
-                    <td class="text-base-content/60">{{ crash.timestamp | date:'short' }}</td>
+                    <td class="opacity-60">{{ crash.timestamp | date:'short' }}</td>
                     <td>
                       @if (crash.prUrl) {
                         <a [href]="crash.prUrl" target="_blank" class="link link-primary">View PR</a>
                       }
                       @if (!crash.prUrl) {
-                        <span class="text-base-content/40">-</span>
+                        <span class="opacity-40">-</span>
                       }
                     </td>
                   </tr>
                 }
                 @if (crashes.length === 0) {
                   <tr>
-                    <td colspan="5" class="text-center py-8 text-base-content/60">
+                    <td colspan="5" class="text-center py-8 opacity-60">
                       No crashes recorded yet
                     </td>
                   </tr>

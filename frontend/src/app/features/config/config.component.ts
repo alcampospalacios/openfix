@@ -16,164 +16,186 @@ interface Model {
   template: `
     <div class="space-y-6">
       <div>
-        <h2 class="text-2xl font-bold text-white">Configuration</h2>
-        <p class="text-gray-400">Configure your repositories, AI model, and Firebase projects</p>
+        <h2 class="text-2xl font-bold">Configuration</h2>
+        <p class="opacity-60">Configure your repositories, AI model, and Firebase projects</p>
       </div>
 
       <!-- Agent Status -->
-      <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center space-x-3">
-            <div class="w-3 h-3 rounded-full" 
-                 [ngClass]="agentStatus === 'running' ? 'bg-green-400' : 'bg-red-400'"></div>
-            <span class="text-white font-medium">Agent Status</span>
-            <span class="text-gray-400">{{ agentStatus === 'running' ? '🟢 Running' : '🔴 Stopped' }}</span>
+      <div class="card bg-base-200">
+        <div class="card-body">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-3 h-3 rounded-full" 
+                   [class.bg-success]="agentStatus === 'running'"
+                   [class.bg-error]="agentStatus !== 'running'"></div>
+              <span class="font-medium">Agent Status</span>
+              <span class="opacity-60">{{ agentStatus === 'running' ? 'Running' : 'Stopped' }}</span>
+            </div>
+            <button (click)="restartAgent()"
+                    [disabled]="agentRestarting"
+                    class="btn btn-warning btn-sm">
+              {{ agentRestarting ? 'Restarting...' : 'Restart Agent' }}
+            </button>
           </div>
-          <button (click)="restartAgent()"
-                  [disabled]="agentRestarting"
-                  class="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg font-medium transition-colors">
-            {{ agentRestarting ? 'Restarting...' : '🔄 Restart Agent' }}
-          </button>
         </div>
       </div>
 
       <!-- AI Model Selection -->
-      <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
-        <h3 class="text-lg font-semibold text-white mb-4">🤖 AI Model</h3>
-        
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label class="block text-gray-400 text-sm mb-2">Select Model</label>
-            <select [(ngModel)]="selectedModel"
-                    (ngModelChange)="onModelChange()"
-                    class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary-500">
-              <option *ngFor="let model of models" [value]="model.id">
-                {{ model.name }} ({{ model.provider }})
-              </option>
-            </select>
-          </div>
+      <div class="card bg-base-200">
+        <div class="card-body">
+          <h3 class="card-title">🤖 AI Model</h3>
+          
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text opacity-60">Select Model</span>
+              </label>
+              <select [(ngModel)]="selectedModel"
+                      (ngModelChange)="onModelChange()"
+                      class="select select-bordered">
+                @for (model of models; track model.id) {
+                  <option [value]="model.id">{{ model.name }} ({{ model.provider }})</option>
+                }
+              </select>
+            </div>
 
-          <div>
-            <label class="block text-gray-400 text-sm mb-2">API Key (optional)</label>
-            <input type="password" 
-                   [(ngModel)]="apiKey"
-                   (blur)="saveModel()"
-                   placeholder="Your API key for selected model"
-                   class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary-500">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text opacity-60">API Key (optional)</span>
+              </label>
+              <input type="password" 
+                     [(ngModel)]="apiKey"
+                     (blur)="saveModel()"
+                     placeholder="Your API key for selected model"
+                     class="input input-bordered">
+            </div>
           </div>
-        </div>
-        
-        <div class="mt-4 p-3 bg-gray-700 rounded-lg flex items-center justify-between">
-          <div>
-            <span class="text-gray-400 text-sm">Current model: </span>
-            <span class="text-primary-400 font-medium">{{ getCurrentModelName() }}</span>
-          </div>
-          <div *ngIf="agentRestarting" class="text-yellow-400 text-sm animate-pulse">
-            ⏳ Agent restarting with new model...
+          
+          <div class="mt-4 flex items-center justify-between">
+            <div>
+              <span class="opacity-60 text-sm">Current model: </span>
+              <span class="text-primary font-medium">{{ getCurrentModelName() }}</span>
+            </div>
+            @if (agentRestarting) {
+              <span class="text-warning animate-pulse">Agent restarting with new model...</span>
+            }
           </div>
         </div>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- GitHub Config -->
-        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
-          <h3 class="text-lg font-semibold text-white mb-4">GitHub Repository</h3>
-          
-          <div class="space-y-4">
-            <div>
-              <label class="block text-gray-400 text-sm mb-2">Repository URL</label>
-              <input type="text" 
-                     [(ngModel)]="githubRepo"
-                     placeholder="owner/repo or https://github.com/owner/repo"
-                     class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary-500">
-            </div>
+        <div class="card bg-base-200">
+          <div class="card-body">
+            <h3 class="card-title">GitHub Repository</h3>
             
-            <div>
-              <label class="block text-gray-400 text-sm mb-2">GitHub Token</label>
-              <input type="password" 
-                     [(ngModel)]="githubToken"
-                     placeholder="ghp_xxxxx"
-                     class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary-500">
-            </div>
+            <div class="space-y-4">
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text opacity-60">Repository URL</span>
+                </label>
+                <input type="text" 
+                       [(ngModel)]="githubRepo"
+                       placeholder="owner/repo or https://github.com/owner/repo"
+                       class="input input-bordered">
+              </div>
+              
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text opacity-60">GitHub Token</span>
+                </label>
+                <input type="password" 
+                       [(ngModel)]="githubToken"
+                       placeholder="ghp_xxxxx"
+                       class="input input-bordered">
+              </div>
 
-            <button (click)="saveConfig()"
-                    [disabled]="!githubRepo || !githubToken"
-                    class="w-full bg-primary-600 hover:bg-primary-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg font-medium transition-colors">
-              Save Configuration
-            </button>
+              <button (click)="saveConfig()"
+                      [disabled]="!githubRepo || !githubToken"
+                      class="btn btn-primary">
+                Save Configuration
+              </button>
+            </div>
           </div>
         </div>
 
         <!-- Download Repo -->
-        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
-          <h3 class="text-lg font-semibold text-white mb-4">Repository Status</h3>
-          
-          <div class="space-y-4">
-            <div class="flex items-center justify-between p-4 bg-gray-700 rounded-lg">
+        <div class="card bg-base-200">
+          <div class="card-body">
+            <h3 class="card-title">Repository Status</h3>
+            
+            <div class="flex items-center justify-between p-4 bg-base-300 rounded-lg">
               <div>
-                <div class="text-white font-medium">Repository Downloaded</div>
-                <div class="text-gray-400 text-sm">{{ repoStatus.downloaded ? '✅ Ready for agent' : '❌ Not downloaded' }}</div>
+                <div class="font-medium">Repository Downloaded</div>
+                <div class="opacity-60 text-sm">{{ repoStatus.downloaded ? 'Ready for agent' : 'Not downloaded' }}</div>
               </div>
               <button (click)="downloadRepo()"
                       [disabled]="!githubRepo || downloading"
-                      class="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium transition-colors">
+                      class="btn btn-success btn-sm">
                 {{ downloading ? 'Downloading...' : (repoStatus.downloaded ? 'Re-download' : 'Download') }}
               </button>
             </div>
 
-            <div *ngIf="repoStatus.downloaded" class="text-gray-400 text-sm">
-              Files: {{ repoStatus.files }}
-            </div>
+            @if (repoStatus.downloaded) {
+              <div class="opacity-60 text-sm">Files: {{ repoStatus.files }}</div>
+            }
           </div>
         </div>
 
         <!-- Firebase Config -->
-        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 lg:col-span-2">
-          <h3 class="text-lg font-semibold text-white mb-4">Firebase Project</h3>
-          
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label class="block text-gray-400 text-sm mb-2">Project ID</label>
-              <input type="text" 
-                     [(ngModel)]="firebaseProjectId"
-                     placeholder="my-app-prod"
-                     class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary-500">
-            </div>
+        <div class="card bg-base-200 lg:col-span-2">
+          <div class="card-body">
+            <h3 class="card-title">Firebase Project</h3>
             
-            <div>
-              <label class="block text-gray-400 text-sm mb-2">Service Account JSON</label>
-              <textarea 
-                     [(ngModel)]="firebaseCredentials"
-                     placeholder='{"type": "service_account", ...}'
-                     rows="3"
-                     class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary-500 font-mono text-sm"></textarea>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text opacity-60">Project ID</span>
+                </label>
+                <input type="text" 
+                       [(ngModel)]="firebaseProjectId"
+                       placeholder="my-app-prod"
+                       class="input input-bordered">
+              </div>
+              
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text opacity-60">Service Account JSON</span>
+                </label>
+                <textarea 
+                       [(ngModel)]="firebaseCredentials"
+                       placeholder='{"type": "service_account", ...}'
+                       rows="3"
+                       class="textarea textarea-bordered font-mono text-sm"></textarea>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       <!-- Webhook URL -->
-      <div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
-        <h3 class="text-lg font-semibold text-white mb-4">Firebase Webhook URL</h3>
-        <p class="text-gray-400 text-sm mb-4">
-          Configure this URL in Firebase Crashlytics to receive crash notifications:
-        </p>
-        <div class="flex items-center space-x-2">
-          <code class="bg-gray-700 px-4 py-2 rounded text-primary-400 flex-1 overflow-x-auto">
-            http://localhost:3000/api/webhook/firebase
-          </code>
-          <button (click)="copyUrl()" 
-                  class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-white transition-colors">
-            Copy
-          </button>
+      <div class="card bg-base-200">
+        <div class="card-body">
+          <h3 class="card-title">Firebase Webhook URL</h3>
+          <p class="opacity-60 text-sm mb-4">
+            Configure this URL in Firebase Crashlytics to receive crash notifications:
+          </p>
+          <div class="flex items-center gap-2">
+            <code class="flex-1 bg-base-300 px-4 py-2 rounded text-primary">
+              http://localhost:3000/api/webhook/firebase
+            </code>
+            <button (click)="copyUrl()" class="btn btn-ghost btn-sm">
+              Copy
+            </button>
+          </div>
         </div>
       </div>
 
-      <!-- Messages -->
-      <div *ngIf="message" 
-           class="bg-green-600/20 border border-green-600 text-green-400 px-4 py-3 rounded-lg">
-        {{ message }}
-      </div>
+      @if (message) {
+        <div class="alert alert-success">
+          <span>{{ message }}</span>
+        </div>
+      }
     </div>
   `
 })
@@ -210,8 +232,6 @@ export class ConfigComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.loadExistingConfig();
     this.checkAgentStatus();
-    
-    // Poll agent status
     this.statusInterval = setInterval(() => this.checkAgentStatus(), 5000);
   }
 
@@ -234,7 +254,6 @@ export class ConfigComponent implements OnInit, OnDestroy {
       .subscribe({
         next: () => {
           this.showMessage('Agent restarting...');
-          // Wait for agent to come back
           setTimeout(() => {
             this.agentRestarting = false;
             this.checkAgentStatus();
@@ -276,10 +295,9 @@ export class ConfigComponent implements OnInit, OnDestroy {
       model: this.selectedModel,
       api_key: this.apiKey
     }).subscribe({
-      next: (res) => {
+      next: () => {
         this.showMessage(`Model updated to ${this.getCurrentModelName()}! Agent restarting...`);
         
-        // Poll until agent is back
         setTimeout(() => {
           this.checkAgentStatus();
           this.agentRestarting = false;

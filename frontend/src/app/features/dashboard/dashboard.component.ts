@@ -24,13 +24,13 @@ interface Stats {
     <div class="space-y-6 p-4">
       <div>
         <h2 class="text-2xl font-bold">Dashboard</h2>
-        <p class="text-base-content/60">Monitor your crashes and fixes</p>
+        <p class="opacity-60">Monitor your crashes and fixes</p>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div class="card bg-base-200">
           <div class="card-body">
-            <div class="text-base-content/60 text-sm">Total Crashes</div>
+            <div class="opacity-60 text-sm">Total Crashes</div>
             <div class="text-3xl font-bold">{{ stats.total }}</div>
           </div>
         </div>
@@ -84,12 +84,12 @@ interface Stats {
                       }
                     </td>
                     <td>{{ crash.title }}</td>
-                    <td class="text-base-content/60">{{ crash.id }}</td>
+                    <td class="opacity-60">{{ crash.id }}</td>
                   </tr>
                 }
                 @if (crashes.length === 0) {
                   <tr>
-                    <td colspan="3" class="text-center py-8 text-base-content/60">
+                    <td colspan="3" class="text-center py-8 opacity-60">
                       No crashes yet. Configure your repository to start monitoring.
                     </td>
                   </tr>
