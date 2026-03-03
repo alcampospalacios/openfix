@@ -7,11 +7,11 @@
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const WebSocket = require('ws');
 
 // Configuration
 const CONFIG = {
   backendUrl: process.env.BACKEND_URL || 'http://backend:3000',
-  pollingInterval: 30000,        // Check for crashes every 30 seconds
   heartbeatInterval: 180000,       // Send heartbeat every 3 minutes
 };
 
@@ -23,67 +23,85 @@ let currentConfig = {
   apiKey: ''
 };
 
-// Message handler for test messages
-let messageHandler = null;
+// WebSocket connection
+let wsConnection = null;
+let heartbeatTimer = null;
+let reconnectTimer = null;
 
 /**
  * Main agent loop
  */
 async function startAgent() {
-  console.log('🤖 Openfix Agent starting...');
-  console.log(`🔗 Backend: ${CONFIG.backendUrl}`);
-  
+  console.log('Openfix Agent starting...');
+  console.log(`Backend: ${CONFIG.backendUrl}`);
+
   await loadConfig();
-  
-  // Send heartbeat every 3 minutes
-  setInterval(async () => {
-    await sendHeartbeat();
-  }, CONFIG.heartbeatInterval);
-  
-  // Initial heartbeat
-  await sendHeartbeat();
-  
-  // Poll for crashes every 30 seconds
-  setInterval(async () => {
-    await checkForCrashes();
-  }, CONFIG.pollingInterval);
-  
+
+  // Connect via WebSocket
+  connectWebSocket();
+
+  // Initial catch-up: check for any pending crashes
   await checkForCrashes();
-  
-  // Poll for test messages
-  setInterval(async () => {
-    await checkForTestMessages();
-  }, 5000);
 }
 
 /**
- * Check for test messages from backend
+ * Connect to backend via WebSocket
  */
-async function checkForTestMessages() {
-  try {
-    const response = await fetch(`${CONFIG.backendUrl}/api/agent/test-queue`);
-    const messages = await response.json();
-    
-    for (const msg of messages) {
-      console.log(`📨 Test message received: ${msg.text}`);
-      
-      // Process the message
-      const reply = processTestMessage(msg.text);
-      
-      // Send response back
-      await fetch(`${CONFIG.backendUrl}/api/agent/test-response`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          messageId: msg.id, 
-          response: reply 
-        })
-      });
-      
-      console.log(`📤 Response sent: ${reply}`);
+function connectWebSocket() {
+  const wsUrl = CONFIG.backendUrl.replace('http', 'ws') + '/ws/agent';
+  console.log(`Connecting WebSocket: ${wsUrl}`);
+
+  wsConnection = new WebSocket(wsUrl);
+
+  wsConnection.on('open', () => {
+    console.log('WebSocket connected');
+    // Send initial heartbeat
+    wsSend('heartbeat', { status: 'running' });
+    // Start heartbeat interval
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = setInterval(() => {
+      wsSend('heartbeat', { status: 'running' });
+      console.log('Heartbeat sent');
+    }, CONFIG.heartbeatInterval);
+  });
+
+  wsConnection.on('message', async (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+      const { event, data } = msg;
+
+      if (event === 'new_crash') {
+        console.log(`New crash received via WS: ${data.id}`);
+        await processCrash(data);
+      } else if (event === 'test_message') {
+        console.log(`Test message received: ${data.text}`);
+        const reply = processTestMessage(data.text);
+        wsSend('test_response', { messageId: data.id, response: reply });
+        console.log(`Response sent: ${reply}`);
+      }
+    } catch (err) {
+      console.error('WS message error:', err.message);
     }
-  } catch (error) {
-    // Silently ignore - no messages is fine
+  });
+
+  wsConnection.on('close', () => {
+    console.log('WebSocket disconnected, reconnecting in 5s...');
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    reconnectTimer = setTimeout(() => connectWebSocket(), 5000);
+  });
+
+  wsConnection.on('error', (err) => {
+    console.error('WebSocket error:', err.message);
+    wsConnection.close();
+  });
+}
+
+/**
+ * Send message via WebSocket
+ */
+function wsSend(event, data) {
+  if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+    wsConnection.send(JSON.stringify({ event, data }));
   }
 }
 
@@ -92,24 +110,24 @@ async function checkForTestMessages() {
  */
 function processTestMessage(text) {
   const lower = text.toLowerCase();
-  
+
   if (lower.includes('hola') || lower.includes('hello') || lower.includes('hi')) {
-    return `👋 Hola! Estoy funcionando correctamente.\n\n🤖 Modelo: ${currentConfig.model}\n📦 Repo: ${currentConfig.githubRepo || 'No configurado'}\n⏰ Hora: ${new Date().toLocaleString()}`;
+    return `Hola! Estoy funcionando correctamente.\n\nModelo: ${currentConfig.model}\nRepo: ${currentConfig.githubRepo || 'No configurado'}\nHora: ${new Date().toLocaleString()}`;
   }
-  
+
   if (lower.includes('status') || lower.includes('estado')) {
-    return `✅ Estado: Running\n🤖 Modelo: ${currentConfig.model}\n📦 Repo: ${currentConfig.githubRepo || 'No configurado'}`;
+    return `Estado: Running\nModelo: ${currentConfig.model}\nRepo: ${currentConfig.githubRepo || 'No configurado'}`;
   }
-  
+
   if (lower.includes('help') || lower.includes('ayuda')) {
-    return `📋 Comandos disponibles:\n- hola/hello/hi: Saludar\n- status/estado: Ver estado\n- help/ayuda: Ver comandos`;
+    return `Comandos disponibles:\n- hola/hello/hi: Saludar\n- status/estado: Ver estado\n- help/ayuda: Ver comandos`;
   }
-  
-  return `✅ Mensaje recibido: "${text}"\n\n🤖 Estoy funcionando! Usa "help" para ver comandos disponibles.`;
+
+  return `Mensaje recibido: "${text}"\n\nEstoy funcionando! Usa "help" para ver comandos disponibles.`;
 }
 
 /**
- * Send heartbeat to backend - SIMPLE: just alive
+ * Send heartbeat to backend - HTTP fallback
  */
 async function sendHeartbeat() {
   try {
@@ -120,9 +138,8 @@ async function sendHeartbeat() {
         status: 'running'
       })
     });
-    console.log('💓 Heartbeat sent');
   } catch (error) {
-    console.log('⚠️  Failed to send heartbeat:', error.message);
+    console.log('Failed to send heartbeat:', error.message);
   }
 }
 
@@ -133,7 +150,7 @@ async function loadConfig() {
   try {
     const response = await fetch(`${CONFIG.backendUrl}/api/agent/config`);
     const config = await response.json();
-    
+
     const keys = Object.keys(config);
     if (keys.length > 0) {
       const repoId = keys[0];
@@ -143,13 +160,13 @@ async function loadConfig() {
         model: config[repoId].model || 'minimax/MiniMax-M2.5',
         apiKey: config[repoId].api_key || ''
       };
-      
-      console.log(`📦 Config loaded:`);
+
+      console.log(`Config loaded:`);
       console.log(`   - Repo: ${currentConfig.githubRepo}`);
       console.log(`   - Model: ${currentConfig.model}`);
     }
   } catch (error) {
-    console.log('⚠️  No config yet, waiting for setup...');
+    console.log('No config yet, waiting for setup...');
   }
 }
 
@@ -158,14 +175,14 @@ async function loadConfig() {
  */
 async function checkForCrashes() {
   await loadConfig();
-  
+
   try {
     const response = await fetch(`${CONFIG.backendUrl}/api/crashes?status=pending`);
     const crashes = await response.json();
-    
+
     if (crashes.length > 0) {
-      console.log(`📩 Found ${crashes.length} pending crash(es)`);
-      
+      console.log(`Found ${crashes.length} pending crash(es)`);
+
       for (const crash of crashes) {
         await processCrash(crash);
       }
@@ -179,32 +196,70 @@ async function checkForCrashes() {
  * Process a single crash
  */
 async function processCrash(crash) {
-  console.log(`🔧 Processing crash: ${crash.id}`);
+  console.log(`Processing crash: ${crash.id}`);
   console.log(`   Title: ${crash.title}`);
   console.log(`   Model: ${currentConfig.model}`);
-  
+
+  const steps = [
+    { id: 'cloning', label: 'Clone repository' },
+    { id: 'analyzing', label: 'Analyze crash with AI' },
+    { id: 'branching', label: 'Create fix branch' },
+    { id: 'fixing', label: 'Apply fix' },
+    { id: 'pushing', label: 'Push changes' },
+    { id: 'pr', label: 'Create Pull Request' },
+  ];
+
+  function sendProgress(stepId, status, message) {
+    wsSend('crash_progress', {
+      crashId: crash.id,
+      step: stepId,
+      status,  // 'running' | 'success' | 'error'
+      message,
+      steps,
+    });
+  }
+
   try {
+    sendProgress('cloning', 'running', 'Preparing repository...');
     const repoDir = await ensureRepoCloned();
-    console.log('🤖 Generating fix with AI...');
+    sendProgress('cloning', 'success', 'Repository ready (latest main)');
+
+    sendProgress('analyzing', 'running', `Analyzing crash with ${currentConfig.model}...`);
     const analysis = await analyzeCrashWithAI(crash, repoDir);
-    
+    sendProgress('analyzing', 'success', 'Analysis complete');
+
     const branchName = `fix/${crash.id}`;
-    console.log(`🌿 Creating branch: ${branchName}`);
+    sendProgress('branching', 'running', `Creating branch ${branchName}...`);
     await createFixBranch(branchName);
-    
-    console.log('🔨 Applying fix...');
+    sendProgress('branching', 'success', `Branch ${branchName} created`);
+
+    sendProgress('fixing', 'running', 'Applying fix to codebase...');
     await applyFix(branchName, crash, analysis, repoDir);
-    
-    console.log('📝 Creating Pull Request...');
+    sendProgress('fixing', 'success', 'Fix applied and committed');
+
+    sendProgress('pushing', 'running', 'Pushing to remote...');
+    // push is inside applyFix, so mark success directly
+    sendProgress('pushing', 'success', 'Changes pushed');
+
+    sendProgress('pr', 'running', 'Creating Pull Request...');
     const prUrl = await createPullRequest(branchName, crash);
-    
+    sendProgress('pr', 'success', `PR created: ${prUrl}`);
+
     await updateCrashStatus(crash.id, 'fixed', prUrl);
-    
-    console.log(`✅ Crash ${crash.id} fixed!`);
+
+    console.log(`Crash ${crash.id} fixed!`);
     console.log(`   PR: ${prUrl}`);
-    
+
   } catch (error) {
-    console.error(`❌ Failed:`, error.message);
+    console.error(`Failed:`, error.message);
+    // Find the current step that was running and mark it as error
+    wsSend('crash_progress', {
+      crashId: crash.id,
+      step: 'error',
+      status: 'error',
+      message: error.message,
+      steps,
+    });
     await updateCrashStatus(crash.id, 'failed', null, error.message);
   }
 }
@@ -214,7 +269,7 @@ async function processCrash(crash) {
  */
 async function analyzeCrashWithAI(crash, repoDir) {
   const relevantFiles = await findRelevantFiles(crash, repoDir);
-  
+
   const context = {
     crash: {
       id: crash.id,
@@ -225,9 +280,9 @@ async function analyzeCrashWithAI(crash, repoDir) {
     relevantFiles: relevantFiles.slice(0, 5),
     model: currentConfig.model
   };
-  
+
   let fix = '';
-  
+
   switch (currentConfig.model) {
     case 'minimax/MiniMax-M2.5':
       fix = await generateFixWithMiniMax(context);
@@ -244,7 +299,7 @@ async function analyzeCrashWithAI(crash, repoDir) {
     default:
       fix = await generateFixWithMiniMax(context);
   }
-  
+
   return fix;
 }
 
@@ -262,7 +317,7 @@ async function generateFixWithMiniMax(context) {
 async function generateFixWithOpenAI(context) {
   console.log(`   Using GPT-4o...`);
   if (!currentConfig.apiKey) {
-    console.log('⚠️  No OpenAI API key, using fallback');
+    console.log('No OpenAI API key, using fallback');
     return await generateFixWithMiniMax(context);
   }
   return { explanation: 'Fix from OpenAI', changes: [] };
@@ -274,7 +329,7 @@ async function generateFixWithOpenAI(context) {
 async function generateFixWithClaude(context) {
   console.log(`   Using Claude 3.5...`);
   if (!currentConfig.apiKey) {
-    console.log('⚠️  No Claude API key, using fallback');
+    console.log('No Claude API key, using fallback');
     return await generateFixWithMiniMax(context);
   }
   return { explanation: 'Fix from Claude', changes: [] };
@@ -286,7 +341,7 @@ async function generateFixWithClaude(context) {
 async function generateFixWithGemini(context) {
   console.log(`   Using Gemini 2.0...`);
   if (!currentConfig.apiKey) {
-    console.log('⚠️  No Gemini API key, using fallback');
+    console.log('No Gemini API key, using fallback');
     return await generateFixWithMiniMax(context);
   }
   return { explanation: 'Fix from Gemini', changes: [] };
@@ -297,19 +352,19 @@ async function generateFixWithGemini(context) {
  */
 async function findRelevantFiles(crash, repoDir) {
   const files = [];
-  
+
   try {
     const keywords = crash.title.toLowerCase()
       .replace(/[^a-z0-9]/g, ' ')
       .split(' ')
       .filter(k => k.length > 3)
       .slice(0, 3);
-    
+
     const searchCmd = `find ${repoDir}/src -type f -name "*.ts" -o -name "*.js" 2>/dev/null | head -20`;
     const result = execSync(searchCmd, { encoding: 'utf8' });
-    
+
     const allFiles = result.trim().split('\n');
-    
+
     for (const file of allFiles) {
       for (const keyword of keywords) {
         if (file.toLowerCase().includes(keyword)) {
@@ -321,38 +376,50 @@ async function findRelevantFiles(crash, repoDir) {
   } catch (e) {
     console.log('   Could not search files');
   }
-  
+
   return files;
 }
 
 /**
- * Ensure repository is cloned
+ * Ensure repository is cloned and clean on main with latest changes
  */
 async function ensureRepoCloned() {
   const repoDir = '/tmp/openfix-repo';
-  
+
+  if (!currentConfig.githubRepo || !currentConfig.githubToken) {
+    throw new Error('GitHub not configured');
+  }
+
   if (!fs.existsSync(repoDir)) {
-    if (!currentConfig.githubRepo || !currentConfig.githubToken) {
-      throw new Error('GitHub not configured');
-    }
-    
-    console.log(`📦 Cloning ${currentConfig.githubRepo}...`);
+    console.log(`Cloning ${currentConfig.githubRepo}...`);
     const repoUrl = `https://${currentConfig.githubToken}@github.com/${currentConfig.githubRepo}.git`;
     execSync(`git clone ${repoUrl} ${repoDir}`, { stdio: 'inherit' });
+  } else {
+    // Repo already exists — discard any local changes and update main
+    console.log('Repository exists, resetting to latest main...');
+    execSync('git checkout main --force', { cwd: repoDir, stdio: 'inherit' });
+    execSync('git clean -fd', { cwd: repoDir, stdio: 'inherit' });
+    execSync('git pull origin main', { cwd: repoDir, stdio: 'inherit' });
   }
-  
+
   return repoDir;
 }
 
 /**
- * Create fix branch
+ * Create fix branch from current clean main
  */
 async function createFixBranch(branchName) {
   const repoDir = '/tmp/openfix-repo';
-  
-  execSync('git checkout main && git pull', { cwd: repoDir, stdio: 'inherit' });
+
+  // Delete branch if it somehow already exists locally
+  try {
+    execSync(`git branch -D ${branchName}`, { cwd: repoDir, stdio: 'ignore' });
+  } catch (_) {
+    // Branch didn't exist, that's fine
+  }
+
   execSync(`git checkout -b ${branchName}`, { cwd: repoDir, stdio: 'inherit' });
-  
+
   return branchName;
 }
 
@@ -361,7 +428,7 @@ async function createFixBranch(branchName) {
  */
 async function applyFix(branchName, crash, fix, repoDir) {
   const fixFile = path.join(repoDir, 'FIXES.md');
-  
+
   const content = `
 # Fix for ${crash.id}
 
@@ -380,14 +447,14 @@ ${new Date().toISOString()}
 ## Model Used
 ${currentConfig.model}
 `;
-  
+
   fs.appendFileSync(fixFile, content);
-  
+
   execSync(`git add . && git commit -m "fix(${crash.id}): resolve ${crash.title}"`, {
     cwd: repoDir,
     stdio: 'inherit'
   });
-  
+
   execSync(`git push -u origin ${branchName}`, {
     cwd: repoDir,
     stdio: 'inherit',
@@ -400,13 +467,13 @@ ${currentConfig.model}
  */
 async function createPullRequest(branchName, crash) {
   const repoDir = '/tmp/openfix-repo';
-  
+
   try {
     const prUrl = execSync(`gh pr create --title "Fix: ${crash.title}" --body "Auto-generated fix for crash ${crash.id}"`, {
       cwd: repoDir,
       encoding: 'utf8'
     }).trim();
-    
+
     return prUrl;
   } catch (e) {
     return `https://github.com/${currentConfig.githubRepo}/pull/new/${branchName}`;
@@ -414,17 +481,21 @@ async function createPullRequest(branchName, crash) {
 }
 
 /**
- * Update crash status
+ * Update crash status - sends via WS + HTTP fallback
  */
 async function updateCrashStatus(crashId, status, prUrl = null, error = null) {
+  // Try WebSocket first
+  wsSend('crash_update', { crashId, status, prUrl, error });
+
+  // HTTP fallback
   try {
     await fetch(`${CONFIG.backendUrl}/api/crashes/${crashId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, prUrl, error })
     });
-  } catch (error) {
-    console.error('Failed to update status:', error.message);
+  } catch (err) {
+    console.error('Failed to update status via HTTP:', err.message);
   }
 }
 

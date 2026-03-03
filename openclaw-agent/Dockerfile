@@ -9,7 +9,7 @@ RUN apk add --no-cache git openssh-client curl
 COPY agent.js ./
 
 # Install runtime dependencies
-RUN npm init -y && npm install node-fetch
+RUN npm init -y && npm install node-fetch ws
 
 # Agent runs continuously
 CMD ["node", "agent.js"]
