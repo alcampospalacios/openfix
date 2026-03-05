@@ -3,7 +3,9 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Install dependencies
-RUN apk add --no-cache git openssh-client curl
+RUN apk add --no-cache git openssh-client curl \
+    && git config --global user.email "openfix-agent@openfix.dev" \
+    && git config --global user.name "Openfix Agent"
 
 # Copy agent code
 COPY agent.js ./

@@ -5,43 +5,32 @@ FastAPI - Lightweight API for receiving Firebase notifications
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Body, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional
+from contextlib import asynccontextmanager
 import json
 import os
 import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-import time
 import uuid
 import asyncio
 
+from sqlalchemy import select
+
+from db import (
+    init_db, get_session,
+    Crash, RepoConfig as RepoConfigModel, AgentStatus as AgentStatusModel, TestMessage as TestMessageModel,
+    crash_to_dict, config_to_dict, agent_status_to_dict, test_message_to_dict,
+)
 from ws_manager import manager
 from slack_listener import set_ws_manager, start_slack_listener
+from crashlytics_enricher import fetch_crashes_from_bq, run_enrichment_queue, is_queue_running
 
-app = FastAPI(title="Openfix API", version="1.0.0")
 
-# Storage directories
-DATA_DIR = Path("/app/data")
-DATA_DIR.mkdir(exist_ok=True)
+# Storage directories (repos still on filesystem)
 REPOS_DIR = Path("/app/repos")
 REPOS_DIR.mkdir(exist_ok=True)
-
-CRASHES_FILE = DATA_DIR / "crashes.json"
-CONFIG_FILE = DATA_DIR / "config.json"
-AGENT_STATUS_FILE = DATA_DIR / "agent_status.json"
-TEST_MESSAGES_FILE = DATA_DIR / "test_messages.json"
-
-# Test messages storage
-def load_test_messages():
-    if TEST_MESSAGES_FILE.exists():
-        with open(TEST_MESSAGES_FILE) as f:
-            return json.load(f)
-    return []
-
-def save_test_messages(messages):
-    with open(TEST_MESSAGES_FILE, 'w') as f:
-        json.dump(messages, f, indent=2)
 
 # Available models
 AVAILABLE_MODELS = [
@@ -51,38 +40,8 @@ AVAILABLE_MODELS = [
     {"id": "google/gemini-2.0-flash", "name": "Gemini 2.0 Flash", "provider": "google"},
 ]
 
-# Load/Save helpers
-def load_crashes():
-    if CRASHES_FILE.exists():
-        with open(CRASHES_FILE) as f:
-            return json.load(f)
-    return []
 
-def save_crashes(crashes):
-    with open(CRASHES_FILE, 'w') as f:
-        json.dump(crashes, f, indent=2)
-
-def load_config():
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
-    return {}
-
-def save_config(config):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f, indent=2)
-
-def load_agent_status():
-    if AGENT_STATUS_FILE.exists():
-        with open(AGENT_STATUS_FILE) as f:
-            return json.load(f)
-    return {"status": "offline", "last_seen": None}
-
-def save_agent_status(status_data):
-    with open(AGENT_STATUS_FILE, 'w') as f:
-        json.dump(status_data, f, indent=2)
-
-# Models
+# Models (Pydantic)
 class CrashPayload(BaseModel):
     event: str
     data: dict
@@ -121,13 +80,25 @@ class TestResponse(BaseModel):
     response: str
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Start Slack listener on app startup."""
+# ── Lifespan ────────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _loop_ref
+    # Startup
+    await init_db()
     loop = asyncio.get_event_loop()
+    _loop_ref = loop
     set_ws_manager(manager, loop)
     start_slack_listener()
+    yield
+    # Shutdown (nothing needed)
 
+
+app = FastAPI(title="Openfix API", version="1.0.0", lifespan=lifespan)
+
+
+# ── Health ──────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
@@ -141,21 +112,27 @@ def health():
 def get_models():
     return {"models": AVAILABLE_MODELS}
 
-# --- WebSocket Endpoints ---
+
+# ── WebSocket Endpoints ─────────────────────────────────────────────────────
 
 @app.websocket("/ws/frontend")
 async def ws_frontend(websocket: WebSocket):
     await manager.connect_frontend(websocket)
     try:
         # Send initial state
-        agent_status = load_agent_status()
-        if agent_status.get("last_seen"):
-            last_seen = datetime.fromisoformat(agent_status["last_seen"])
-            now = datetime.utcnow()
-            if (now - last_seen).total_seconds() / 60 > 5:
-                agent_status["status"] = "offline"
+        async with get_session() as session:
+            agent_row = await session.get(AgentStatusModel, 1)
+            agent_status = agent_status_to_dict(agent_row) if agent_row else {"status": "offline", "last_seen": None}
 
-        crashes = load_crashes()
+            if agent_status.get("last_seen"):
+                last_seen = datetime.fromisoformat(agent_status["last_seen"])
+                now = datetime.utcnow()
+                if (now - last_seen).total_seconds() / 60 > 5:
+                    agent_status["status"] = "offline"
+
+            result = await session.execute(select(Crash))
+            crashes = [crash_to_dict(c) for c in result.scalars().all()]
+
         await websocket.send_text(json.dumps({
             "event": "init",
             "data": {"agent_status": agent_status, "crashes": crashes}
@@ -169,17 +146,13 @@ async def ws_frontend(websocket: WebSocket):
             if event == "test_message":
                 data = msg.get("data", {})
                 msg_id = str(uuid.uuid4())[:8]
-                # Save test message
-                messages = load_test_messages()
-                new_message = {
-                    "id": msg_id,
-                    "text": data.get("text", ""),
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "response": None
-                }
-                messages.append(new_message)
-                save_test_messages(messages)
-                # Forward to agent via WS
+                async with get_session() as session:
+                    session.add(TestMessageModel(
+                        id=msg_id,
+                        text=data.get("text", ""),
+                        timestamp=datetime.utcnow().isoformat(),
+                        response=None,
+                    ))
                 await manager.send_to_agent("test_message", {"id": msg_id, "text": data.get("text", "")})
 
     except WebSocketDisconnect:
@@ -193,7 +166,13 @@ async def ws_agent(websocket: WebSocket):
     await manager.connect_agent(websocket)
     # Mark agent as running
     status_data = {"status": "running", "last_seen": datetime.utcnow().isoformat()}
-    save_agent_status(status_data)
+    async with get_session() as session:
+        agent = await session.get(AgentStatusModel, 1)
+        if agent:
+            agent.status = "running"
+            agent.last_seen = status_data["last_seen"]
+        else:
+            session.add(AgentStatusModel(id=1, status="running", last_seen=status_data["last_seen"]))
     await manager.broadcast_to_frontends("agent_status", status_data)
 
     try:
@@ -206,79 +185,93 @@ async def ws_agent(websocket: WebSocket):
             if event == "heartbeat":
                 status_data = {
                     "status": data.get("status", "running"),
-                    "last_seen": datetime.utcnow().isoformat()
+                    "last_seen": datetime.utcnow().isoformat(),
                 }
-                save_agent_status(status_data)
+                async with get_session() as session:
+                    agent = await session.get(AgentStatusModel, 1)
+                    if agent:
+                        agent.status = status_data["status"]
+                        agent.last_seen = status_data["last_seen"]
+                    else:
+                        session.add(AgentStatusModel(id=1, **status_data))
                 await manager.broadcast_to_frontends("agent_status", status_data)
 
             elif event == "test_response":
-                # Save response to file for HTTP fallback
-                messages = load_test_messages()
-                for m in messages:
-                    if m["id"] == data.get("messageId"):
-                        m["response"] = data.get("response")
-                        m["responded_at"] = datetime.utcnow().isoformat()
-                        break
-                save_test_messages(messages)
-                # Forward to frontends
+                async with get_session() as session:
+                    msg_row = await session.get(TestMessageModel, data.get("messageId"))
+                    if msg_row:
+                        msg_row.response = data.get("response")
+                        msg_row.responded_at = datetime.utcnow().isoformat()
                 await manager.broadcast_to_frontends("test_response", data)
 
             elif event == "crash_progress":
-                # Forward pipeline progress to all frontends
                 await manager.broadcast_to_frontends("crash_progress", data)
 
             elif event == "crash_update":
                 crash_id = data.get("crashId")
-                crashes = load_crashes()
-                for crash in crashes:
-                    if crash["id"] == crash_id:
+                async with get_session() as session:
+                    crash = await session.get(Crash, crash_id)
+                    if crash:
                         if data.get("status"):
-                            crash["status"] = data["status"]
+                            crash.status = data["status"]
                         if data.get("prUrl"):
-                            crash["prUrl"] = data["prUrl"]
+                            crash.pr_url = data["prUrl"]
                         if data.get("error"):
-                            crash["error"] = data["error"]
-                        crash["updated_at"] = datetime.utcnow().isoformat()
-                        break
-                save_crashes(crashes)
+                            crash.error = data["error"]
+                        crash.updated_at = datetime.utcnow().isoformat()
                 await manager.broadcast_to_frontends("crash_updated", data)
 
     except WebSocketDisconnect:
         manager.disconnect_agent()
-        status_data = {"status": "offline", "last_seen": datetime.utcnow().isoformat()}
-        save_agent_status(status_data)
-        await manager.broadcast_to_frontends("agent_status", status_data)
+        await _set_agent_offline()
     except Exception:
         manager.disconnect_agent()
-        status_data = {"status": "offline", "last_seen": datetime.utcnow().isoformat()}
-        save_agent_status(status_data)
-        await manager.broadcast_to_frontends("agent_status", status_data)
+        await _set_agent_offline()
 
 
-# --- HTTP Endpoints (kept as fallback) ---
+async def _set_agent_offline():
+    status_data = {"status": "offline", "last_seen": datetime.utcnow().isoformat()}
+    async with get_session() as session:
+        agent = await session.get(AgentStatusModel, 1)
+        if agent:
+            agent.status = "offline"
+            agent.last_seen = status_data["last_seen"]
+        else:
+            session.add(AgentStatusModel(id=1, **status_data))
+    await manager.broadcast_to_frontends("agent_status", status_data)
+
+
+# ── HTTP Endpoints ──────────────────────────────────────────────────────────
 
 @app.post("/api/agent/heartbeat")
-def agent_heartbeat(heartbeat: AgentHeartbeat):
-    """Agent reports its status"""
+async def agent_heartbeat(heartbeat: AgentHeartbeat):
     status_data = {
         "status": heartbeat.status,
         "model": heartbeat.model,
-        "last_seen": datetime.utcnow().isoformat()
+        "last_seen": datetime.utcnow().isoformat(),
     }
-    save_agent_status(status_data)
+    async with get_session() as session:
+        agent = await session.get(AgentStatusModel, 1)
+        if agent:
+            agent.status = heartbeat.status
+            agent.model = heartbeat.model
+            agent.last_seen = status_data["last_seen"]
+        else:
+            session.add(AgentStatusModel(id=1, **status_data))
     return {"status": "ok", "message": "Heartbeat received"}
 
 @app.get("/api/agent/status")
-def get_agent_status():
-    """Get agent status"""
-    status_data = load_agent_status()
+async def get_agent_status():
+    async with get_session() as session:
+        agent = await session.get(AgentStatusModel, 1)
+        if not agent:
+            return {"status": "offline", "last_seen": None}
+        status_data = agent_status_to_dict(agent)
 
-    # Check if still alive (last seen < 5 minutes)
     if status_data.get("last_seen"):
         last_seen = datetime.fromisoformat(status_data["last_seen"])
         now = datetime.utcnow()
         minutes_ago = (now - last_seen).total_seconds() / 60
-
         if minutes_ago > 5:
             status_data["status"] = "offline"
 
@@ -286,93 +279,83 @@ def get_agent_status():
 
 # Test message endpoints
 @app.post("/api/agent/test")
-def send_test_message(message: TestMessage):
-    """Frontend sends a test message to the agent"""
-    messages = load_test_messages()
-
+async def send_test_message(message: TestMessage):
     msg_id = str(uuid.uuid4())[:8]
-    new_message = {
-        "id": msg_id,
-        "text": message.text,
-        "timestamp": datetime.utcnow().isoformat(),
-        "response": None
-    }
-
-    messages.append(new_message)
-    save_test_messages(messages)
-
+    async with get_session() as session:
+        session.add(TestMessageModel(
+            id=msg_id,
+            text=message.text,
+            timestamp=datetime.utcnow().isoformat(),
+            response=None,
+        ))
     return {"status": "sent", "messageId": msg_id, "text": message.text}
 
 @app.get("/api/agent/test-queue")
-def get_test_queue():
-    """Agent polls for pending test messages"""
-    messages = load_test_messages()
-
-    # Return messages without response
-    pending = [m for m in messages if m.get("response") is None]
+async def get_test_queue():
+    async with get_session() as session:
+        result = await session.execute(
+            select(TestMessageModel).where(TestMessageModel.response.is_(None))
+        )
+        pending = [test_message_to_dict(m) for m in result.scalars().all()]
     return pending
 
 @app.post("/api/agent/test-response")
-def send_test_response(response: TestResponse):
-    """Agent sends a response to a test message"""
-    messages = load_test_messages()
-
-    for msg in messages:
-        if msg["id"] == response.messageId:
-            msg["response"] = response.response
-            msg["responded_at"] = datetime.utcnow().isoformat()
-            save_test_messages(messages)
-            return {"status": "ok"}
-
-    raise HTTPException(status_code=404, detail="Message not found")
+async def send_test_response(response: TestResponse):
+    async with get_session() as session:
+        msg = await session.get(TestMessageModel, response.messageId)
+        if not msg:
+            raise HTTPException(status_code=404, detail="Message not found")
+        msg.response = response.response
+        msg.responded_at = datetime.utcnow().isoformat()
+    return {"status": "ok"}
 
 @app.get("/api/agent/test/{message_id}")
-def get_test_response(message_id: str):
-    """Frontend polls for response to a test message"""
-    messages = load_test_messages()
-
-    for msg in messages:
-        if msg["id"] == message_id:
-            return {
-                "id": msg["id"],
-                "text": msg["text"],
-                "response": msg.get("response"),
-                "hasResponse": msg.get("response") is not None
-            }
-
-    raise HTTPException(status_code=404, detail="Message not found")
+async def get_test_response(message_id: str):
+    async with get_session() as session:
+        msg = await session.get(TestMessageModel, message_id)
+        if not msg:
+            raise HTTPException(status_code=404, detail="Message not found")
+        return {
+            "id": msg.id,
+            "text": msg.text,
+            "response": msg.response,
+            "hasResponse": msg.response is not None,
+        }
 
 @app.post("/api/config")
-def configure_repo(config: RepoConfig):
-    current = load_config()
-    current[config.repo_id] = {
-        "github_repo": config.github_repo,
-        "github_token": config.github_token,
-        "firebase_project": config.firebase_project,
-        "firebase_credentials": config.firebase_credentials,
-        "model": config.model or "minimax/MiniMax-M2.5"
-    }
-    save_config(current)
+async def configure_repo(config: RepoConfig):
+    async with get_session() as session:
+        existing = await session.get(RepoConfigModel, config.repo_id)
+        if existing:
+            existing.github_repo = config.github_repo
+            existing.github_token = config.github_token
+            existing.firebase_project = config.firebase_project or ""
+            existing.firebase_credentials = config.firebase_credentials or ""
+            existing.model = config.model or "minimax/MiniMax-M2.5"
+        else:
+            session.add(RepoConfigModel(
+                repo_id=config.repo_id,
+                github_repo=config.github_repo,
+                github_token=config.github_token,
+                firebase_project=config.firebase_project or "",
+                firebase_credentials=config.firebase_credentials or "",
+                model=config.model or "minimax/MiniMax-M2.5",
+            ))
     return {"status": "configured", "repo_id": config.repo_id}
 
 @app.post("/api/config/slack")
-def configure_slack(slack_config: SlackConfig, background_tasks: BackgroundTasks):
-    """Save Slack config and restart the Slack listener."""
-    current = load_config()
-    keys = list(current.keys())
+async def configure_slack(slack_config: SlackConfig, background_tasks: BackgroundTasks):
+    async with get_session() as session:
+        result = await session.execute(select(RepoConfigModel))
+        first = result.scalars().first()
+        if not first:
+            first = RepoConfigModel(repo_id="default")
+            session.add(first)
+        first.slack_app_token = slack_config.slack_app_token
+        first.slack_bot_token = slack_config.slack_bot_token
+        first.slack_channel_id = slack_config.slack_channel_id
 
-    if not keys:
-        current["default"] = {}
-        keys = ["default"]
-
-    current[keys[0]]["slack_app_token"] = slack_config.slack_app_token
-    current[keys[0]]["slack_bot_token"] = slack_config.slack_bot_token
-    current[keys[0]]["slack_channel_id"] = slack_config.slack_channel_id
-    save_config(current)
-
-    # Restart Slack listener in background
     background_tasks.add_task(_restart_slack_listener)
-
     return {"status": "configured", "message": "Slack config saved. Listener restarting..."}
 
 
@@ -381,44 +364,37 @@ def _restart_slack_listener():
 
 
 @app.post("/api/config/model")
-def configure_model(model_config: ModelConfig, background_tasks: BackgroundTasks):
-    current = load_config()
+async def configure_model(model_config: ModelConfig, background_tasks: BackgroundTasks):
+    async with get_session() as session:
+        result = await session.execute(select(RepoConfigModel))
+        first = result.scalars().first()
+        if first:
+            first.model = model_config.model
+            if model_config.api_key:
+                first.api_key = model_config.api_key
+        else:
+            session.add(RepoConfigModel(
+                repo_id="default",
+                model=model_config.model,
+                api_key=model_config.api_key,
+            ))
 
-    keys = list(current.keys())
-    if keys:
-        current[keys[0]]["model"] = model_config.model
-        if model_config.api_key:
-            current[keys[0]]["api_key"] = model_config.api_key
-    else:
-        current["default"] = {
-            "model": model_config.model,
-            "api_key": model_config.api_key
-        }
-
-    save_config(current)
     background_tasks.add_task(restart_agent)
-
     return {"status": "configured", "model": model_config.model, "agent_restarting": True}
 
 def restart_agent():
     try:
         result = subprocess.run(
             ["docker-compose", "restart", "agent"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd="/app"
+            capture_output=True, text=True, timeout=60, cwd="/app",
         )
-
         if result.returncode == 0:
             print("Agent restarted successfully")
         else:
             subprocess.run(
                 ["docker", "restart", "openfix-agent-1"],
-                capture_output=True,
-                timeout=30
+                capture_output=True, timeout=30,
             )
-
     except Exception as e:
         print(f"Error restarting agent: {e}")
 
@@ -428,26 +404,28 @@ def restart_agent_manual(background_tasks: BackgroundTasks):
     return {"status": "restarting", "message": "Agent is restarting..."}
 
 @app.get("/api/repos")
-def get_repos():
-    return load_config()
+async def get_repos():
+    async with get_session() as session:
+        result = await session.execute(select(RepoConfigModel))
+        configs = result.scalars().all()
+    return {rc.repo_id: config_to_dict(rc) for rc in configs}
 
 @app.get("/api/repos/{repo_id}")
-def get_repo(repo_id: str):
-    config = load_config()
-    if repo_id not in config:
-        raise HTTPException(status_code=404, detail="Repository not found")
-    return config[repo_id]
+async def get_repo(repo_id: str):
+    async with get_session() as session:
+        rc = await session.get(RepoConfigModel, repo_id)
+        if not rc:
+            raise HTTPException(status_code=404, detail="Repository not found")
+        return config_to_dict(rc)
 
 @app.post("/api/repos/{repo_id}/download")
-def download_repo(repo_id: str, background_tasks: BackgroundTasks):
-    config = load_config()
-
-    if repo_id not in config:
-        raise HTTPException(status_code=404, detail="Repository not found")
-
-    repo_config = config[repo_id]
-    github_repo = repo_config['github_repo']
-    github_token = repo_config['github_token']
+async def download_repo(repo_id: str, background_tasks: BackgroundTasks):
+    async with get_session() as session:
+        rc = await session.get(RepoConfigModel, repo_id)
+        if not rc:
+            raise HTTPException(status_code=404, detail="Repository not found")
+        github_repo = rc.github_repo
+        github_token = rc.github_token
 
     if '/' in github_repo and not github_repo.startswith('http'):
         repo_name = github_repo
@@ -459,38 +437,31 @@ def download_repo(repo_id: str, background_tasks: BackgroundTasks):
 
     target_dir = REPOS_DIR / repo_id
     background_tasks.add_task(clone_repository, github_token, repo_name, target_dir)
-
     return {"status": "downloading", "repo_id": repo_id, "path": str(target_dir)}
 
 def clone_repository(token: str, repo_name: str, target_dir: Path):
     try:
         if target_dir.exists():
             shutil.rmtree(target_dir)
-
         repo_url = f"https://{token}@github.com/{repo_name}.git"
         result = subprocess.run(
             ["git", "clone", "--depth", "1", repo_url, str(target_dir)],
-            capture_output=True,
-            text=True,
-            timeout=300
+            capture_output=True, text=True, timeout=300,
         )
-
         if result.returncode != 0:
             print(f"Failed to clone: {result.stderr}")
         else:
             print(f"Successfully cloned {repo_name}")
-
     except Exception as e:
         print(f"Error cloning repo: {e}")
 
 @app.get("/api/repos/{repo_id}/status")
-def get_repo_status(repo_id: str):
-    config = load_config()
-
-    if repo_id not in config:
-        raise HTTPException(status_code=404, detail="Repository not found")
-
-    github_repo = config[repo_id]['github_repo']
+async def get_repo_status(repo_id: str):
+    async with get_session() as session:
+        rc = await session.get(RepoConfigModel, repo_id)
+        if not rc:
+            raise HTTPException(status_code=404, detail="Repository not found")
+        github_repo = rc.github_repo
 
     if '/' in github_repo and not github_repo.startswith('http'):
         repo_name = github_repo
@@ -501,25 +472,21 @@ def get_repo_status(repo_id: str):
         repo_name = github_repo
 
     target_dir = REPOS_DIR / repo_name
-
     return {
         "repo_id": repo_id,
         "downloaded": target_dir.exists(),
         "path": str(target_dir),
-        "files": len(list(target_dir.rglob('*'))) if target_dir.exists() else 0
+        "files": len(list(target_dir.rglob('*'))) if target_dir.exists() else 0,
     }
 
 @app.post("/api/webhook/slack")
 async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
-    """Receive crash alerts from Slack (via Firebase Crashlytics integration)"""
     try:
         body = await request.body()
         body_text = body.decode('utf-8')
-
         data = json.loads(body_text)
 
         blocks = data.get('blocks', [])
-
         crash_title = "New crash from Slack"
         crash_description = ""
 
@@ -532,29 +499,37 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
         if data.get('text'):
             crash_title = data.get('text', '')[:100]
 
-        crash = {
-            "id": f"slack_{datetime.utcnow().timestamp()}",
+        crash_id = f"slack_{datetime.utcnow().timestamp()}"
+        now_iso = datetime.utcnow().isoformat()
+
+        async with get_session() as session:
+            session.add(Crash(
+                id=crash_id,
+                title=crash_title,
+                description=crash_description,
+                timestamp=now_iso,
+                severity="ERROR",
+                status="pending",
+                source="slack",
+            ))
+
+        crash_dict = {
+            "id": crash_id,
             "title": crash_title,
             "description": crash_description,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": now_iso,
             "severity": "ERROR",
             "status": "pending",
             "source": "slack",
             "prUrl": None,
-            "error": None
+            "error": None,
         }
 
-        crashes = load_crashes()
-        crashes.append(crash)
-        save_crashes(crashes)
+        await manager.send_to_agent("new_crash", crash_dict)
+        await manager.broadcast_to_frontends("new_crash", crash_dict)
+        background_tasks.add_task(trigger_agent, crash_dict)
 
-        # Broadcast via WebSocket
-        await manager.send_to_agent("new_crash", crash)
-        await manager.broadcast_to_frontends("new_crash", crash)
-
-        background_tasks.add_task(trigger_agent, crash)
-
-        return {"status": "received", "source": "slack", "crash_id": crash["id"]}
+        return {"status": "received", "source": "slack", "crash_id": crash_id}
 
     except Exception as e:
         print(f"Slack webhook error: {e}")
@@ -563,76 +538,247 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
 @app.post("/api/webhook/firebase")
 async def firebase_webhook(payload: CrashPayload, background_tasks: BackgroundTasks):
     crash_data = payload.data
+    crash_id = crash_data.get("issueId", f"crash_{datetime.utcnow().timestamp()}")
+    now_iso = crash_data.get("timestamp", datetime.utcnow().isoformat())
 
-    crash = {
-        "id": crash_data.get("issueId", f"crash_{datetime.utcnow().timestamp()}"),
+    async with get_session() as session:
+        session.add(Crash(
+            id=crash_id,
+            title=crash_data.get("issueTitle", "Unknown crash"),
+            description=crash_data.get("issueDescription", ""),
+            timestamp=now_iso,
+            severity=crash_data.get("severity", "ERROR"),
+            status="pending",
+        ))
+
+    crash_dict = {
+        "id": crash_id,
         "title": crash_data.get("issueTitle", "Unknown crash"),
         "description": crash_data.get("issueDescription", ""),
-        "timestamp": crash_data.get("timestamp", datetime.utcnow().isoformat()),
+        "timestamp": now_iso,
         "severity": crash_data.get("severity", "ERROR"),
         "status": "pending",
         "prUrl": None,
-        "error": None
+        "error": None,
     }
 
-    crashes = load_crashes()
-    crashes.append(crash)
-    save_crashes(crashes)
+    await manager.send_to_agent("new_crash", crash_dict)
+    await manager.broadcast_to_frontends("new_crash", crash_dict)
+    background_tasks.add_task(trigger_agent, crash_dict)
 
-    # Broadcast via WebSocket
-    await manager.send_to_agent("new_crash", crash)
-    await manager.broadcast_to_frontends("new_crash", crash)
-
-    background_tasks.add_task(trigger_agent, crash)
-
-    return {"status": "received", "crash_id": crash["id"]}
+    return {"status": "received", "crash_id": crash_id}
 
 async def trigger_agent(crash: dict):
     print(f"New crash detected: {crash['id']}")
 
 @app.get("/api/crashes")
-def get_crashes(status: Optional[str] = None):
-    crashes = load_crashes()
-    if status:
-        crashes = [c for c in crashes if c.get("status") == status]
+async def get_crashes(status: Optional[str] = None):
+    async with get_session() as session:
+        stmt = select(Crash)
+        if status:
+            stmt = stmt.where(Crash.status == status)
+        result = await session.execute(stmt)
+        crashes = [crash_to_dict(c) for c in result.scalars().all()]
     return crashes
 
 @app.get("/api/crashes/{crash_id}")
-def get_crash(crash_id: str):
-    crashes = load_crashes()
-    for crash in crashes:
-        if crash["id"] == crash_id:
-            return crash
-    raise HTTPException(status_code=404, detail="Crash not found")
+async def get_crash(crash_id: str):
+    async with get_session() as session:
+        crash = await session.get(Crash, crash_id)
+        if not crash:
+            raise HTTPException(status_code=404, detail="Crash not found")
+        return crash_to_dict(crash)
 
 @app.patch("/api/crashes/{crash_id}")
 async def update_crash(crash_id: str, update: CrashUpdate = Body(...)):
-    crashes = load_crashes()
+    async with get_session() as session:
+        crash = await session.get(Crash, crash_id)
+        if not crash:
+            raise HTTPException(status_code=404, detail="Crash not found")
+        if update.status:
+            crash.status = update.status
+        if update.prUrl:
+            crash.pr_url = update.prUrl
+        if update.error:
+            crash.error = update.error
+        crash.updated_at = datetime.utcnow().isoformat()
 
-    for crash in crashes:
-        if crash["id"] == crash_id:
-            if update.status:
-                crash["status"] = update.status
-            if update.prUrl:
-                crash["prUrl"] = update.prUrl
-            if update.error:
-                crash["error"] = update.error
-            crash["updated_at"] = datetime.utcnow().isoformat()
-            save_crashes(crashes)
-            # Broadcast update to frontends
-            await manager.broadcast_to_frontends("crash_updated", {
-                "crashId": crash_id,
-                "status": crash.get("status"),
-                "prUrl": crash.get("prUrl"),
-                "error": crash.get("error"),
+    await manager.broadcast_to_frontends("crash_updated", {
+        "crashId": crash_id,
+        "status": update.status,
+        "prUrl": update.prUrl,
+        "error": update.error,
+    })
+    return crash_to_dict(crash)
+
+
+@app.post("/api/crashes/{crash_id}/process")
+async def process_crash(crash_id: str):
+    """Send a crash to the agent for processing (manual trigger)."""
+    async with get_session() as session:
+        crash = await session.get(Crash, crash_id)
+        if not crash:
+            raise HTTPException(status_code=404, detail="Crash not found")
+        # Reset status to pending
+        crash.status = "pending"
+        crash.error = None
+        crash.pr_url = None
+        crash.updated_at = datetime.utcnow().isoformat()
+        crash_dict = crash_to_dict(crash)
+
+    # Send to agent
+    await manager.send_to_agent("new_crash", crash_dict)
+    await manager.broadcast_to_frontends("crash_updated", {
+        "crashId": crash_id,
+        "status": "pending",
+        "prUrl": None,
+        "error": None,
+    })
+    return {"status": "sent", "crash_id": crash_id}
+
+
+@app.post("/api/crashes/sync-bq")
+async def sync_bigquery():
+    """Fetch new crashes from BigQuery and enrich un-enriched ones."""
+    if is_queue_running():
+        return {"status": "already_running"}
+
+    # Load Firebase config from DB
+    async with get_session() as session:
+        result = await session.execute(select(RepoConfigModel))
+        rc = result.scalars().first()
+
+    if not rc or not rc.firebase_project or not rc.firebase_credentials:
+        raise HTTPException(status_code=400, detail="Firebase config not set")
+
+    # Get app_package/platform from first existing crash with those fields
+    app_package = ""
+    platform = "ANDROID"
+    async with get_session() as session:
+        result = await session.execute(
+            select(Crash).where(Crash.app_package != "").limit(1)
+        )
+        sample_crash = result.scalars().first()
+        if sample_crash:
+            app_package = sample_crash.app_package
+            platform = sample_crash.platform or "ANDROID"
+
+    config = {
+        "firebase_project": rc.firebase_project,
+        "firebase_credentials": rc.firebase_credentials,
+        "app_package": app_package,
+        "platform": platform,
+    }
+
+    import threading
+
+    def _sync_task():
+        try:
+            # 1. Broadcast: started
+            _broadcast_from_thread("bq_sync_started", {"message": "Querying BigQuery..."})
+
+            # 2. Fetch crashes from BQ
+            new_crashes = fetch_crashes_from_bq(config)
+
+            # 3. Insert new ones, skip duplicates
+            inserted = 0
+            for crash_dict in new_crashes:
+                future = asyncio.run_coroutine_threadsafe(
+                    _insert_crash_if_new(crash_dict), _loop_ref
+                )
+                try:
+                    was_new = future.result(timeout=10)
+                    if was_new:
+                        inserted += 1
+                except Exception as e:
+                    _broadcast_from_thread("bq_sync_error", {"error": f"Insert error: {e}"})
+
+            # 4. Broadcast: fetch done with counts
+            _broadcast_from_thread("bq_sync_fetched", {
+                "total_found": len(new_crashes),
+                "new_inserted": inserted,
             })
-            return crash
 
-    raise HTTPException(status_code=404, detail="Crash not found")
+            # 5. Run enrichment queue
+            run_enrichment_queue(config)
+
+        except Exception as e:
+            _broadcast_from_thread("bq_sync_error", {"error": f"Sync failed: {e}"})
+            _broadcast_from_thread("enrich_queue_done", {"total": 0, "completed": 0})
+
+    thread = threading.Thread(target=_sync_task, daemon=True)
+    thread.start()
+
+    return {"status": "syncing"}
+
+
+@app.get("/api/crashes/sync-bq/status")
+async def sync_bigquery_status():
+    """Check if a BQ sync is currently running."""
+    return {"running": is_queue_running()}
+
+
+# Event loop reference for background threads (set in lifespan)
+_loop_ref = None
+
+
+async def _insert_crash_if_new(crash_dict: dict) -> bool:
+    """Insert a crash into DB if it doesn't already exist. Returns True if inserted."""
+    async with get_session() as session:
+        existing = await session.get(Crash, crash_dict["id"])
+        if existing:
+            return False
+        session.add(Crash(
+            id=crash_dict["id"],
+            title=crash_dict.get("title", ""),
+            description=crash_dict.get("description", ""),
+            timestamp=crash_dict.get("timestamp", ""),
+            severity=crash_dict.get("severity", "ERROR"),
+            status=crash_dict.get("status", "pending"),
+            source=crash_dict.get("source", "bigquery"),
+            exception_class=crash_dict.get("exception_class", ""),
+            app_package=crash_dict.get("app_package", ""),
+            platform=crash_dict.get("platform", ""),
+            version=crash_dict.get("version", ""),
+            enriched=False,
+        ))
+
+    # Broadcast new crash to frontends and send to agent
+    broadcast_data = {
+        "id": crash_dict["id"],
+        "title": crash_dict.get("title", ""),
+        "description": crash_dict.get("description", ""),
+        "timestamp": crash_dict.get("timestamp", ""),
+        "severity": crash_dict.get("severity", "ERROR"),
+        "status": crash_dict.get("status", "pending"),
+        "source": crash_dict.get("source", "bigquery"),
+        "exception_class": crash_dict.get("exception_class", ""),
+        "app_package": crash_dict.get("app_package", ""),
+        "platform": crash_dict.get("platform", ""),
+        "version": crash_dict.get("version", ""),
+        "enriched": False,
+        "prUrl": None,
+        "error": None,
+    }
+    await manager.broadcast_to_frontends("new_crash", broadcast_data)
+    await manager.send_to_agent("new_crash", broadcast_data)
+    return True
+
+
+def _broadcast_from_thread(event: str, data: dict):
+    """Broadcast a WS event from a background thread."""
+    if _loop_ref:
+        async def _do():
+            await manager.broadcast_to_frontends(event, data)
+        asyncio.run_coroutine_threadsafe(_do(), _loop_ref)
+
 
 @app.get("/api/agent/config")
-def get_agent_config():
-    return load_config()
+async def get_agent_config():
+    async with get_session() as session:
+        result = await session.execute(select(RepoConfigModel))
+        configs = result.scalars().all()
+    return {rc.repo_id: config_to_dict(rc) for rc in configs}
 
 
 if __name__ == "__main__":

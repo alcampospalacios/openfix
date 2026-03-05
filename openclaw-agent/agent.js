@@ -196,6 +196,9 @@ async function checkForCrashes() {
  * Process a single crash
  */
 async function processCrash(crash) {
+  // Reload config before each crash to pick up any changes
+  await loadConfig();
+
   console.log(`Processing crash: ${crash.id}`);
   console.log(`   Title: ${crash.title}`);
   console.log(`   Model: ${currentConfig.model}`);

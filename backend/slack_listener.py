@@ -7,7 +7,6 @@ in a configured channel, without exposing the backend to the internet.
 import json
 import asyncio
 import re
-import os
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -17,12 +16,11 @@ from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.socket_mode.request import SocketModeRequest
 
+from sqlalchemy import select
+
+from db import get_session, Crash, RepoConfig, crash_to_dict, config_to_dict
 from crashlytics_enricher import set_ws_manager as set_enricher_ws, start_enrichment
 
-
-DATA_DIR = Path("/app/data")
-CRASHES_FILE = DATA_DIR / "crashes.json"
-CONFIG_FILE = DATA_DIR / "config.json"
 
 # Will be set from main.py to broadcast via WebSocket
 _ws_manager = None
@@ -36,31 +34,11 @@ def set_ws_manager(manager, loop):
     set_enricher_ws(manager, loop)
 
 
-def load_crashes():
-    if CRASHES_FILE.exists():
-        with open(CRASHES_FILE) as f:
-            return json.load(f)
-    return []
-
-
-def save_crashes(crashes):
-    with open(CRASHES_FILE, "w") as f:
-        json.dump(crashes, f, indent=2)
-
-
-def load_config():
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
-    return {}
-
-
 def parse_crashlytics_message(text: str, blocks: list | None = None) -> dict | None:
     """Parse a Firebase Crashlytics notification from Slack message content."""
     if not text:
         return None
 
-    # Firebase Crashlytics messages typically contain crash-related keywords
     crashlytics_keywords = [
         "crash", "fatal", "exception", "issue", "crashlytics",
         "non-fatal", "anr", "error", "regression", "velocity"
@@ -72,7 +50,6 @@ def parse_crashlytics_message(text: str, blocks: list | None = None) -> dict | N
     if not is_crashlytics:
         return None
 
-    # Extract structured fields via regex
     summary_match = re.search(r"Summary:\s*(.+)", text)
     app_match = re.search(r"App:\s*(\S+)", text)
     platform_match = re.search(r"Platform:\s*(\S+)", text)
@@ -83,13 +60,10 @@ def parse_crashlytics_message(text: str, blocks: list | None = None) -> dict | N
     platform = platform_match.group(1).strip() if platform_match else ""
     version = version_match.group(1).strip() if version_match else ""
 
-    # Extract title - first meaningful line or the whole text truncated
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
     title = exception_class if exception_class else (lines[0][:200] if lines else "Unknown crash from Slack")
 
-    # Try to extract issue ID from URLs or text patterns
     issue_id = None
-    # Firebase console URL pattern
     url_match = re.search(r"issues/([a-f0-9]+)", text)
     if url_match:
         issue_id = url_match.group(1)
@@ -127,14 +101,52 @@ def _broadcast_crash(crash: dict):
         asyncio.run_coroutine_threadsafe(_do_broadcast(), _loop)
 
 
+async def _save_and_broadcast_crash(crash_data: dict):
+    """Insert crash into DB, broadcast via WS, and trigger enrichment."""
+    # Check for duplicates and insert
+    async with get_session() as session:
+        existing = await session.get(Crash, crash_data["id"])
+        if existing:
+            return  # duplicate
+
+        session.add(Crash(
+            id=crash_data["id"],
+            title=crash_data.get("title", ""),
+            description=crash_data.get("description", ""),
+            timestamp=crash_data.get("timestamp", ""),
+            severity=crash_data.get("severity", "ERROR"),
+            status=crash_data.get("status", "pending"),
+            source=crash_data.get("source", ""),
+            pr_url=crash_data.get("prUrl"),
+            error=crash_data.get("error"),
+            exception_class=crash_data.get("exception_class", ""),
+            app_package=crash_data.get("app_package", ""),
+            platform=crash_data.get("platform", ""),
+            version=crash_data.get("version", ""),
+            enriched=crash_data.get("enriched", False),
+        ))
+
+    print(f"New crash from Slack: {crash_data['id']} - {crash_data.get('title', '')[:80]}")
+
+    # Broadcast via WebSocket
+    if _ws_manager:
+        await _ws_manager.send_to_agent("new_crash", crash_data)
+        await _ws_manager.broadcast_to_frontends("new_crash", crash_data)
+
+    # Trigger BigQuery enrichment if firebase credentials are configured
+    async with get_session() as session:
+        result = await session.execute(select(RepoConfig))
+        first = result.scalars().first()
+        if first and first.firebase_project and first.firebase_credentials:
+            repo_cfg = config_to_dict(first)
+            start_enrichment(crash_data, repo_cfg)
+
+
 def _handle_message_event(event: dict, channel_id: str):
     """Process a single Slack message event."""
-    # Only process messages from the configured channel
     if event.get("channel") != channel_id:
         return
 
-    # Ignore bot messages that are our own replies, but allow other bots
-    # (Firebase Crashlytics sends as a bot/integration)
     text = event.get("text", "")
     blocks = event.get("blocks")
 
@@ -142,40 +154,32 @@ def _handle_message_event(event: dict, channel_id: str):
     if not crash:
         return
 
-    # Check for duplicates
-    crashes = load_crashes()
-    existing_ids = {c["id"] for c in crashes}
-    if crash["id"] in existing_ids:
-        return
-
-    crashes.append(crash)
-    save_crashes(crashes)
-    print(f"New crash from Slack: {crash['id']} - {crash['title'][:80]}")
-
-    _broadcast_crash(crash)
-
-    # Trigger BigQuery enrichment if firebase credentials are configured
-    config = load_config()
-    keys = list(config.keys())
-    if keys:
-        repo_config = config[keys[0]]
-        if repo_config.get("firebase_project") and repo_config.get("firebase_credentials"):
-            start_enrichment(crash, repo_config)
+    # Schedule async DB operation on the main event loop
+    if _loop:
+        asyncio.run_coroutine_threadsafe(_save_and_broadcast_crash(crash), _loop)
 
 
 def start_slack_listener():
     """Start Slack Socket Mode listener in a background thread."""
-    config = load_config()
-    keys = list(config.keys())
+    # Load config from DB via the main event loop
+    if not _loop:
+        print("Slack listener: no event loop, skipping")
+        return
 
-    if not keys:
+    future = asyncio.run_coroutine_threadsafe(_load_slack_config(), _loop)
+    try:
+        config = future.result(timeout=10)
+    except Exception as e:
+        print(f"Slack listener: failed to load config: {e}")
+        return
+
+    if not config:
         print("Slack listener: no config, skipping")
         return
 
-    repo_config = config[keys[0]]
-    app_token = repo_config.get("slack_app_token", "")
-    bot_token = repo_config.get("slack_bot_token", "")
-    channel_id = repo_config.get("slack_channel_id", "")
+    app_token = config.get("slack_app_token", "")
+    bot_token = config.get("slack_bot_token", "")
+    channel_id = config.get("slack_channel_id", "")
 
     if not app_token or not bot_token or not channel_id:
         print("Slack listener: missing slack_app_token, slack_bot_token, or slack_channel_id in config")
@@ -190,7 +194,6 @@ def start_slack_listener():
             )
 
             def process(client: SocketModeClient, req: SocketModeRequest):
-                # Acknowledge immediately
                 response = SocketModeResponse(envelope_id=req.envelope_id)
                 client.send_socket_mode_response(response)
 
@@ -198,7 +201,6 @@ def start_slack_listener():
                     event = req.payload.get("event", {})
                     if event.get("type") == "message" and event.get("subtype") is None:
                         _handle_message_event(event, channel_id)
-                    # Also handle bot messages (Firebase sends as bot)
                     elif event.get("type") == "message" and event.get("subtype") == "bot_message":
                         _handle_message_event(event, channel_id)
 
@@ -206,7 +208,6 @@ def start_slack_listener():
             print(f"Slack listener: connecting to channel {channel_id}")
             socket_client.connect()
 
-            # Keep thread alive
             import time
             while True:
                 time.sleep(60)
@@ -217,3 +218,13 @@ def start_slack_listener():
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
     print("Slack listener: started in background thread")
+
+
+async def _load_slack_config() -> dict | None:
+    """Load the first repo config from DB."""
+    async with get_session() as session:
+        result = await session.execute(select(RepoConfig))
+        first = result.scalars().first()
+        if not first:
+            return None
+        return config_to_dict(first)

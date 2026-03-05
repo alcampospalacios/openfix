@@ -1,6 +1,25 @@
 version: '3.8'
 
 services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: openfix
+      POSTGRES_PASSWORD: openfix
+      POSTGRES_DB: openfix
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - openfix-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openfix"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # Frontend Angular with Nginx proxy
   frontend:
     build:
@@ -20,9 +39,14 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://openfix:openfix@postgres:5432/openfix
     volumes:
       - ./data:/app/data
       - ./repos:/app/repos
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - openfix-network
 
@@ -39,6 +63,9 @@ services:
       - ./repos:/app/repos
     networks:
       - openfix-network
+
+volumes:
+  pgdata:
 
 networks:
   openfix-network:

@@ -528,7 +528,8 @@ export class ConfigComponent implements OnInit, OnDestroy {
           const repo = repos[keys[0]];
           this.githubRepo = repo.github_repo;
           this.githubToken = repo.github_token;
-          this.firebaseProjectId = repo.firebase_project;
+          this.firebaseProjectId = repo.firebase_project || '';
+          this.firebaseCredentials = repo.firebase_credentials || '';
           this.selectedModel = repo.model || 'minimax/MiniMax-M2.5';
           this.apiKey = repo.api_key || '';
           this.originalApiKey = this.apiKey;
