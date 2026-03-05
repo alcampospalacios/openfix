@@ -29,6 +29,38 @@ let heartbeatTimer = null;
 let reconnectTimer = null;
 
 /**
+ * Make HTTP request to AI API
+ */
+function makeAiRequest(url, data, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const isHttps = urlObj.protocol === 'https:';
+    const lib = isHttps ? require('https') : require('http');
+    
+    const options = {
+      hostname: urlObj.hostname,
+      port: urlObj.port || (isHttps ? 443 : 80),
+      path: urlObj.pathname + urlObj.search,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers }
+    };
+    
+    const req = lib.request(options, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } 
+        catch { resolve({ error: body }); }
+      });
+    });
+    
+    req.on('error', reject);
+    req.write(JSON.stringify(data));
+    req.end();
+  });
+}
+
+/**
  * Main agent loop
  */
 async function startAgent() {
@@ -311,7 +343,56 @@ async function analyzeCrashWithAI(crash, repoDir) {
  */
 async function generateFixWithMiniMax(context) {
   console.log(`   Using MiniMax M2.5...`);
-  return { explanation: 'Fix generated using MiniMax M2.5', changes: [] };
+  const apiKey = currentConfig.apiKey;
+  
+  if (!apiKey) {
+    return { error: 'No API key configured', explanation: 'Configure API key in settings', fixes: [] };
+  }
+  
+  const { crash, relevantFiles } = context;
+  
+  // Build files context
+  let filesContext = '';
+  for (const file of relevantFiles.slice(0, 3)) {
+    try {
+      const content = fs.readFileSync(file.path, 'utf8').slice(0, 3000);
+      filesContext += `\n\nFile: ${file.path}\n\`\`\`\n${content}\n\`\`\``;
+    } catch (e) {}
+  }
+  
+  const prompt = `You are an expert Flutter/Dart developer.
+
+## Crash
+- Title: ${crash.title}
+- Description: ${crash.description || 'No description'}
+- Severity: ${crash.severity}
+
+## Files
+${filesContext}
+
+Provide fix as JSON:
+{
+  "explanation": "root cause",
+  "fixes": [{"file": "path", "original": "code", "fixed": "fixed", "description": "desc"}]
+}`;
+
+  try {
+    const response = await makeAiRequest(
+      'https://api.minimax.chat/v1/text/chatcompletion_pro_2',
+      { model: 'MiniMax-M2.5', messages: [{ role: 'user', content: prompt }], temperature: 0.7 },
+      { 'Authorization': `Bearer ${apiKey}` }
+    );
+    
+    if (response.choices?.[0]?.message?.content) {
+      const content = response.choices[0].message.content;
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+      return { explanation: content, fixes: [] };
+    }
+    return { error: response.error || 'Unknown error', fixes: [] };
+  } catch (err) {
+    return { error: err.message, fixes: [] };
+  }
 }
 
 /**
@@ -319,11 +400,55 @@ async function generateFixWithMiniMax(context) {
  */
 async function generateFixWithOpenAI(context) {
   console.log(`   Using GPT-4o...`);
-  if (!currentConfig.apiKey) {
-    console.log('No OpenAI API key, using fallback');
-    return await generateFixWithMiniMax(context);
+  const apiKey = currentConfig.apiKey;
+  
+  if (!apiKey) {
+    return { error: 'No API key configured', explanation: 'Configure API key in settings', fixes: [] };
   }
-  return { explanation: 'Fix from OpenAI', changes: [] };
+  
+  const { crash, relevantFiles } = context;
+  
+  let filesContext = '';
+  for (const file of relevantFiles.slice(0, 3)) {
+    try {
+      const content = fs.readFileSync(file.path, 'utf8').slice(0, 3000);
+      filesContext += `\n\nFile: ${file.path}\n\`\`\`\n${content}\n\`\`\``;
+    } catch (e) {}
+  }
+  
+  const prompt = `You are an expert Flutter/Dart developer.
+
+## Crash
+- Title: ${crash.title}
+- Description: ${crash.description || 'No description'}
+- Severity: ${crash.severity}
+
+## Files
+${filesContext}
+
+Provide fix as JSON:
+{
+  "explanation": "root cause",
+  "fixes": [{"file": "path", "original": "code", "fixed": "fixed", "description": "desc"}]
+}`;
+
+  try {
+    const response = await makeAiRequest(
+      'https://api.openai.com/v1/chat/completions',
+      { model: 'gpt-4o', messages: [{ role: 'user', content: prompt }], temperature: 0.7 },
+      { 'Authorization': `Bearer ${apiKey}` }
+    );
+    
+    if (response.choices?.[0]?.message?.content) {
+      const content = response.choices[0].message.content;
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+      return { explanation: content, fixes: [] };
+    }
+    return { error: response.error?.message || 'Unknown error', fixes: [] };
+  } catch (err) {
+    return { error: err.message, fixes: [] };
+  }
 }
 
 /**
@@ -331,11 +456,55 @@ async function generateFixWithOpenAI(context) {
  */
 async function generateFixWithClaude(context) {
   console.log(`   Using Claude 3.5...`);
-  if (!currentConfig.apiKey) {
-    console.log('No Claude API key, using fallback');
-    return await generateFixWithMiniMax(context);
+  const apiKey = currentConfig.apiKey;
+  
+  if (!apiKey) {
+    return { error: 'No API key configured', explanation: 'Configure API key in settings', fixes: [] };
   }
-  return { explanation: 'Fix from Claude', changes: [] };
+  
+  const { crash, relevantFiles } = context;
+  
+  let filesContext = '';
+  for (const file of relevantFiles.slice(0, 3)) {
+    try {
+      const content = fs.readFileSync(file.path, 'utf8').slice(0, 3000);
+      filesContext += `\n\nFile: ${file.path}\n\`\`\`\n${content}\n\`\`\``;
+    } catch (e) {}
+  }
+  
+  const prompt = `You are an expert Flutter/Dart developer.
+
+## Crash
+- Title: ${crash.title}
+- Description: ${crash.description || 'No description'}
+- Severity: ${crash.severity}
+
+## Files
+${filesContext}
+
+Provide fix as JSON:
+{
+  "explanation": "root cause",
+  "fixes": [{"file": "path", "original": "code", "fixed": "fixed", "description": "desc"}]
+}`;
+
+  try {
+    const response = await makeAiRequest(
+      'https://api.anthropic.com/v1/messages',
+      { model: 'claude-3-5-sonnet-20241022', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] },
+      { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+    );
+    
+    if (response.content?.[0]?.text) {
+      const text = response.content[0].text;
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+      return { explanation: text, fixes: [] };
+    }
+    return { error: response.error?.message || 'Unknown error', fixes: [] };
+  } catch (err) {
+    return { error: err.message, fixes: [] };
+  }
 }
 
 /**
@@ -343,11 +512,55 @@ async function generateFixWithClaude(context) {
  */
 async function generateFixWithGemini(context) {
   console.log(`   Using Gemini 2.0...`);
-  if (!currentConfig.apiKey) {
-    console.log('No Gemini API key, using fallback');
-    return await generateFixWithMiniMax(context);
+  const apiKey = currentConfig.apiKey;
+  
+  if (!apiKey) {
+    return { error: 'No API key configured', explanation: 'Configure API key in settings', fixes: [] };
   }
-  return { explanation: 'Fix from Gemini', changes: [] };
+  
+  const { crash, relevantFiles } = context;
+  
+  let filesContext = '';
+  for (const file of relevantFiles.slice(0, 3)) {
+    try {
+      const content = fs.readFileSync(file.path, 'utf8').slice(0, 3000);
+      filesContext += `\n\nFile: ${file.path}\n\`\`\`\n${content}\n\`\`\``;
+    } catch (e) {}
+  }
+  
+  const prompt = `You are an expert Flutter/Dart developer.
+
+## Crash
+- Title: ${crash.title}
+- Description: ${crash.description || 'No description'}
+- Severity: ${crash.severity}
+
+## Files
+${filesContext}
+
+Provide fix as JSON:
+{
+  "explanation": "root cause",
+  "fixes": [{"file": "path", "original": "code", "fixed": "fixed", "description": "desc"}]
+}`;
+
+  try {
+    const response = await makeAiRequest(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.7, maxOutputTokens: 2000 } },
+      {}
+    );
+    
+    if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
+      const text = response.candidates[0].content.parts[0].text;
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) return JSON.parse(jsonMatch[0]);
+      return { explanation: text, fixes: [] };
+    }
+    return { error: response.error?.message || 'Unknown error', fixes: [] };
+  } catch (err) {
+    return { error: err.message, fixes: [] };
+  }
 }
 
 /**
@@ -363,7 +576,8 @@ async function findRelevantFiles(crash, repoDir) {
       .filter(k => k.length > 3)
       .slice(0, 3);
 
-    const searchCmd = `find ${repoDir}/src -type f -name "*.ts" -o -name "*.js" 2>/dev/null | head -20`;
+    // Search for Dart files (Flutter), plus common mobile files
+    const searchCmd = `find ${repoDir} -type f \( -name "*.dart" -o -name "*.kt" -o -name "*.swift" -o -name "*.java" \) 2>/dev/null | head -30`;
     const result = execSync(searchCmd, { encoding: 'utf8' });
 
     const allFiles = result.trim().split('\n');
@@ -371,7 +585,8 @@ async function findRelevantFiles(crash, repoDir) {
     for (const file of allFiles) {
       for (const keyword of keywords) {
         if (file.toLowerCase().includes(keyword)) {
-          files.push({ path: file, name: path.basename(file) });
+          // Store full path relative to repo
+      files.push({ path: file, name: path.basename(file) });
           break;
         }
       }
@@ -430,8 +645,10 @@ async function createFixBranch(branchName) {
  * Apply fix to code
  */
 async function applyFix(branchName, crash, fix, repoDir) {
+  console.log('   Applying fixes to code...');
+  
+  // Always create FIXES.md with explanation
   const fixFile = path.join(repoDir, 'FIXES.md');
-
   const content = `
 # Fix for ${crash.id}
 
@@ -444,15 +661,51 @@ ${crash.description || 'No description'}
 ## Root Cause
 ${fix.explanation}
 
+## Fixes Applied
+${JSON.stringify(fix.fixes || [], null, 2)}
+
 ## Applied at
 ${new Date().toISOString()}
 
 ## Model Used
 ${currentConfig.model}
 `;
-
   fs.appendFileSync(fixFile, content);
 
+  // Apply code fixes if available
+  if (fix.fixes && fix.fixes.length > 0) {
+    for (const fileFix of fix.fixes) {
+      try {
+        const filePath = path.join(repoDir, fileFix.file);
+        
+        if (!fs.existsSync(filePath)) {
+          console.log(`   File not found: ${fileFix.file}, creating...`);
+          // Create parent dirs if needed
+          const dir = path.dirname(filePath);
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+          fs.writeFileSync(filePath, fileFix.fixed);
+          console.log(`   Created: ${fileFix.file}`);
+        } else if (fileFix.original && fileFix.fixed) {
+          // Replace original code with fixed code
+          const originalContent = fs.readFileSync(filePath, 'utf8');
+          if (originalContent.includes(fileFix.original)) {
+            const newContent = originalContent.replace(fileFix.original, fileFix.fixed);
+            fs.writeFileSync(filePath, newContent);
+            console.log(`   Fixed: ${fileFix.file} - ${fileFix.description}`);
+          } else {
+            console.log(`   Could not find original code in ${fileFix.file}, appending instead`);
+            fs.appendFileSync(filePath, '\n\n' + fileFix.fixed);
+          }
+        }
+      } catch (err) {
+        console.log(`   Error applying fix to ${fileFix.file}: ${err.message}`);
+      }
+    }
+  }
+
+  // Commit and push
   execSync(`git add . && git commit -m "fix(${crash.id}): resolve ${crash.title}"`, {
     cwd: repoDir,
     stdio: 'inherit'
@@ -463,6 +716,8 @@ ${currentConfig.model}
     stdio: 'inherit',
     env: { ...process.env, GIT_ASKPASS: '/bin/true' }
   });
+  
+  console.log('   Fixes applied and pushed!');
 }
 
 /**
