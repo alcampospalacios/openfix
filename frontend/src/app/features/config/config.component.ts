@@ -11,6 +11,11 @@ interface Model {
   provider: string;
 }
 
+interface ModelGroup {
+  provider: string;
+  models: Model[];
+}
+
 interface LogEntry {
   time: string;
   message: string;
@@ -43,26 +48,36 @@ interface LogEntry {
         </div>
       </div>
 
-      <!-- AI Model -->
+      <!-- AI Model (via OpenClaw) -->
       <div class="card bg-base-200">
         <div class="card-body">
-          <h3 class="card-title">AI Model</h3>
+          <h3 class="card-title">AI Model <span class="badge badge-ghost badge-sm ml-2">via OpenClaw</span></h3>
+          <p class="opacity-50 text-xs -mt-2">OpenClaw routes your tasks to the selected model. Choose a provider and enter its API key.</p>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
             <div class="form-control">
-              <label class="label"><span class="label-text opacity-60">Select Model</span></label>
+              <label class="label"><span class="label-text opacity-60">Provider / Model</span></label>
               <select [(ngModel)]="selectedModel" (ngModelChange)="onFieldChange()" class="select select-bordered">
-                @for (model of models; track model.id) {
-                  <option [value]="model.id">{{ model.name }} ({{ model.provider }})</option>
+                @for (group of modelGroups; track group.provider) {
+                  <optgroup [label]="group.provider | uppercase">
+                    @for (model of group.models; track model.id) {
+                      <option [value]="model.id">{{ model.name }}</option>
+                    }
+                  </optgroup>
                 }
               </select>
             </div>
 
             <div class="form-control">
-              <label class="label"><span class="label-text opacity-60">API Key</span></label>
-              <input [type]="showApiKey ? 'text' : 'password'"
-                     [(ngModel)]="apiKey" (ngModelChange)="onFieldChange()"
-                     placeholder="Enter API key" class="input input-bordered">
+              <label class="label"><span class="label-text opacity-60">API Key ({{ getSelectedProvider() }})</span></label>
+              <div class="join w-full">
+                <input [type]="showApiKey ? 'text' : 'password'"
+                       [(ngModel)]="apiKey" (ngModelChange)="onFieldChange()"
+                       placeholder="Enter API key for {{ getSelectedProvider() }}" class="input input-bordered join-item w-full">
+                <button (click)="showApiKey = !showApiKey" class="btn btn-ghost join-item">
+                  {{ showApiKey ? 'Hide' : 'Show' }}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -395,14 +410,11 @@ interface LogEntry {
   `
 })
 export class ConfigComponent implements OnInit, OnDestroy {
-  models: Model[] = [
-    { id: 'minimax/MiniMax-M2.5', name: 'MiniMax M2.5', provider: 'minimax' },
-    { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'openai' },
-    { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'anthropic' },
-    { id: 'google/gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'google' },
-  ];
+  models: Model[] = [];
+  modelGroups: ModelGroup[] = [];
 
   selectedModel = 'minimax/MiniMax-M2.5';
+  originalModel = 'minimax/MiniMax-M2.5';
   apiKey = '';
   originalApiKey = '';
 
@@ -437,6 +449,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
   constructor(private http: HttpClient, private ws: WebSocketService) {}
 
   ngOnInit() {
+    this.loadModels();
     this.loadConfig();
     this.checkAgentStatus();
 
@@ -473,7 +486,32 @@ export class ConfigComponent implements OnInit, OnDestroy {
   }
 
   onFieldChange() {
-    this.hasChanges = this.apiKey !== this.originalApiKey;
+    this.hasChanges = this.apiKey !== this.originalApiKey || this.selectedModel !== this.originalModel;
+  }
+
+  getSelectedProvider(): string {
+    const slash = this.selectedModel.indexOf('/');
+    return slash > 0 ? this.selectedModel.substring(0, slash) : 'unknown';
+  }
+
+  loadModels() {
+    this.http.get<any>('/api/models').subscribe({
+      next: (res) => {
+        this.models = res.models || [];
+        // Group by provider
+        const groups: { [key: string]: Model[] } = {};
+        for (const m of this.models) {
+          if (!groups[m.provider]) groups[m.provider] = [];
+          groups[m.provider].push(m);
+        }
+        this.modelGroups = Object.keys(groups).map(p => ({ provider: p, models: groups[p] }));
+      },
+      error: () => {
+        // Fallback if backend is unreachable
+        this.models = [{ id: 'minimax/MiniMax-M2.5', name: 'MiniMax M2.5', provider: 'minimax' }];
+        this.modelGroups = [{ provider: 'minimax', models: this.models }];
+      }
+    });
   }
 
   checkAgentStatus() {
@@ -506,9 +544,10 @@ export class ConfigComponent implements OnInit, OnDestroy {
     this.http.post('/api/config/model', { model: this.selectedModel, api_key: this.apiKey }).subscribe({
       next: () => {
         this.originalApiKey = this.apiKey;
+        this.originalModel = this.selectedModel;
         this.hasChanges = false;
-        this.addLog('RESPONSE: model saved successfully');
-        this.showToast('Model saved! Agent restarting...', 'success');
+        this.addLog('RESPONSE: model saved, OpenClaw config updated');
+        this.showToast('Model saved! OpenClaw updated, agent restarting...', 'success');
         setTimeout(() => this.saving = false, 10000);
       },
       error: (err) => {
@@ -531,6 +570,7 @@ export class ConfigComponent implements OnInit, OnDestroy {
           this.firebaseProjectId = repo.firebase_project || '';
           this.firebaseCredentials = repo.firebase_credentials || '';
           this.selectedModel = repo.model || 'minimax/MiniMax-M2.5';
+          this.originalModel = this.selectedModel;
           this.apiKey = repo.api_key || '';
           this.originalApiKey = this.apiKey;
           // Slack config

@@ -44,19 +44,39 @@ services:
     volumes:
       - ./data:/app/data
       - ./repos:/app/repos
+      - ./openclaw:/app/openclaw
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - openfix-network
 
-  # OpenClaw Agent
+  # OpenClaw Gateway (AI agent runtime)
+  openclaw:
+    image: ghcr.io/openclaw/openclaw:latest
+    environment:
+      HOME: /home/node
+    env_file:
+      - ./openclaw/openclaw.env
+    volumes:
+      - ./openclaw/openclaw.json:/home/node/.openclaw/openclaw.json
+      - ./openclaw/workspace:/home/node/.openclaw/workspace
+      - ./repos:/home/node/repos
+    ports:
+      - "18789:18789"
+    command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--port", "18789"]
+    networks:
+      - openfix-network
+
+  # OpenClaw Agent (bridge between backend and OpenClaw gateway)
   agent:
     build:
       context: ./openclaw-agent
       dockerfile: Dockerfile
     environment:
       - BACKEND_URL=http://backend:3000
+      - OPENCLAW_URL=ws://openclaw:18789
+      - OPENCLAW_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-openfix-token}
     depends_on:
       - backend
     volumes:

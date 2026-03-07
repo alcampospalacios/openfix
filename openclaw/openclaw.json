@@ -1,0 +1,18 @@
+{
+  "gateway": {
+    "port": 18789,
+    "bind": "lan",
+    "auth": {
+      "mode": "token",
+      "token": "openfix-token"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "minimax/MiniMax-M2.5"
+      },
+      "workspace": "/home/node/.openclaw/workspace"
+    }
+  }
+}
